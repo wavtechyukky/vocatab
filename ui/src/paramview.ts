@@ -9,7 +9,7 @@ import type { PhoneSeg } from "./derive";
 import { drawTimeGrid } from "./grid";
 import { t as tr } from "./i18n";
 import { ICONS } from "./icons";
-import { type ParamKey, secPerTick, type Track, type VoiceBase } from "./model";
+import { FPS, type ParamKey, secPerTick, type Track, type VoiceBase } from "./model";
 import { EraseStroke, ensureCurve, evalCurve, lineRange, MULTIPLY_KEYS, PARAMS, paramDef, PenStroke } from "./params";
 import type { Store } from "./store";
 import { KEY_W, type View, wheelScrollX } from "./view";
@@ -61,7 +61,7 @@ export class ParamPanel {
     this.hc = new HiDpiCanvas(canvas, () => this.draw());
     canvas.addEventListener("pointerdown", (e) => this.onDown(e));
     canvas.addEventListener("pointermove", (e) => this.onMove(e));
-    canvas.addEventListener("pointerup", () => this.onUp());
+    canvas.addEventListener("pointerup", (e) => this.onUp(e));
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
     canvas.addEventListener("wheel", (e) => wheelScrollX(this.view, e), { passive: false }); // 横スクロールと横の拡大縮小
     this.renderHead();
@@ -185,6 +185,19 @@ export class ParamPanel {
   }
 
   // ── 操作 ─────────────────────────────────
+  /** エンジンの 1 フレームの長さ（刻み）。 */
+  private frameTicks(): number {
+    return 1 / FPS / secPerTick(this.store.project.bpm);
+  }
+  /** 鉛筆が点を置く間隔（刻み）: 画面の 3 px。ただし縮小しても 2 フレームより粗くしない（速い動きを取りこぼさない）。 */
+  private penGap(): number {
+    return Math.min(3 / this.view.pxPerTick, 2 * this.frameTicks());
+  }
+  /** 一筆の最小の幅（刻み）: 3 フレーム。これより細い変化はエンジンでならされて聞こえない。 */
+  private minStroke(): number {
+    return 3 * this.frameTicks();
+  }
+
   private onDown(e: PointerEvent): void {
     if (e.offsetX < KEY_W) return;
     (e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
@@ -197,7 +210,7 @@ export class ParamPanel {
     const c = ensureCurve(this.store.track.params, key);
     const def = paramDef(key).def;
     if (kind === "pen") {
-      this.drag.pen = new PenStroke(c, def, 3 / this.view.pxPerTick);
+      this.drag.pen = new PenStroke(c, def, this.penGap());
       this.drag.pen.add(t, this.toCurve(key, v), false);
       this.store.changed("project");
     } else if (kind === "erase") {
@@ -219,7 +232,11 @@ export class ParamPanel {
       return;
     }
     if (g.pen) {
-      g.pen.add(t, this.toCurve(key, v));
+      // ブラウザが 1 回にまとめた途中の動きも使う（速く動かしたときの山や谷を取りこぼさない）
+      const evs = typeof e.getCoalescedEvents === "function" ? e.getCoalescedEvents() : [];
+      for (const ev of evs.length ? evs : [e]) {
+        g.pen.add(this.view.xToTick(Math.max(KEY_W, ev.offsetX)), this.toCurve(key, this.vOf(key, ev.offsetY)));
+      }
       this.store.changed("project");
     } else if (g.eraser) {
       g.eraser.add(t);
@@ -231,14 +248,22 @@ export class ParamPanel {
     }
   }
 
-  private onUp(): void {
+  private onUp(e: PointerEvent): void {
     const g = this.drag;
     this.drag = null;
     if (!g) return;
     const key = this.editKey;
-    if (g.kind === "line" && Math.abs(g.t1 - g.t) > 1) {
+    if (g.pen) {
+      // 指を離した位置も描き、細すぎる一筆は 3 フレームの幅にする
+      g.pen.add(this.view.xToTick(Math.max(KEY_W, e.offsetX)), this.toCurve(key, this.vOf(key, e.offsetY)));
+      g.pen.finish(this.minStroke());
+      this.store.changed("project");
+    }
+    if (g.kind === "line" && (g.t1 !== g.t || g.v1 !== g.v)) {
+      // 縦に引いた直線（幅がほぼ無いもの）も、終わりの値を 3 フレームの幅で置く
       const c = ensureCurve(this.store.track.params, key);
-      lineRange(c, g.t, this.toCurve(key, g.v), g.t1, this.toCurve(key, g.v1), 3 / this.view.pxPerTick, paramDef(key).def);
+      lineRange(c, g.t, this.toCurve(key, g.v), g.t1, this.toCurve(key, g.v1), this.penGap(), paramDef(key).def,
+                this.minStroke());
       this.store.changed("project");
     }
     const c = this.store.track.params[key];

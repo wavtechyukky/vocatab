@@ -161,6 +161,10 @@ function onEngineUpdate(): void {
     renderer.wantOut = () => mel.isOn(2);
     mel.onToggle = () => renderer.schedule(50);
     transport.engineWav = (t) => renderer.trackWav(t);
+    // 再生中に合成し直した句があれば、今の再生位置から鳴らし直す（再生は始めたときの波形を写して鳴らすため）
+    renderer.onSynthesized = () => {
+      if (transport.playing) void transport.refresh();
+    };
     // ピアノロールの下端の波形: 選んでいるトラックの、合成が済んだフレーズとブレスの波形（エフェクトの前）
     pr.waveSource = () => renderer.trackParts(store.track, derived().breaths).map((p) => ({ start: p.start / 44100, wav: p.wav }));
     // 歌い手のフルネームはエンジンの一覧が届いてから分かるので、名前を出す所を描き直す

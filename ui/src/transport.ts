@@ -215,6 +215,18 @@ export class Transport {
     this.playing = false;
   }
 
+  /**
+   * 再生中に合成し直した音を、今の再生位置から鳴らし直す。再生は始めたときの波形を写して鳴らすので、
+   * これを呼ばないと、再生中の変更は次に再生するまで聞こえない。停止で戻る位置（再生を始めた位置）はそのまま。
+   */
+  async refresh(): Promise<void> {
+    if (!this.playing || this.starting) return;
+    const keepStart = this.startTick;
+    this.halt();
+    await this.play();
+    this.startTick = keepStart;
+  }
+
   /** 一時停止: 再生位置はその場に残す。 */
   pause(): void {
     this.halt();

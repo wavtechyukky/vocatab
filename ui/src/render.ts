@@ -96,6 +96,8 @@ export class Renderer {
   wantOut: () => boolean = () => false;
   /** トラックのブレスの置き場所（derive の結果。main.ts が入れる。無ければブレスは混ぜない） */
   slotsFor: (track: Track) => BreathSlot[] = () => [];
+  /** 編集の後の合成が全部済んで、合成し直した句があったとき（再生中なら鳴らし直すため。main.ts が入れる） */
+  onSynthesized: () => void = () => {};
   readonly engine: EngineClient = makeEngine();
   private busy = false;
   private timer = 0;
@@ -293,6 +295,7 @@ export class Renderer {
     this.busy = true;
     const ver = this.store.version;
     const p = this.store.project;
+    let made = 0; // この回に合成し直した句の数
     try {
       // 1. 解析（速い。中身が同じ句はエンジン側で取っておいたものを返す）
       for (const track of p.tracks) {
@@ -382,6 +385,7 @@ export class Renderer {
           ph.melPlain = j.mel_plain;
           ph.f0Hash = h;
           ph.status = "済み";
+          made++;
           this.rev++;
           this.onUpdate();
         }
@@ -392,7 +396,10 @@ export class Renderer {
     } finally {
       this.busy = false;
       if (this.store.version !== ver) this.schedule(50);
-      else this.onUpdate(); // 全部済んだことを知らせる（書き出しのボタンなど）
+      else {
+        this.onUpdate(); // 全部済んだことを知らせる（書き出しのボタンなど）
+        if (made) this.onSynthesized();
+      }
     }
   }
 }

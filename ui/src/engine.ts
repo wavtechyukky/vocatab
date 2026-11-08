@@ -88,15 +88,37 @@ export function b64(a: Float32Array): string {
   return btoa(s);
 }
 
-/** 配列の指紋（FNV-1a）。合成し直すかどうかの判定に使う。 */
+/** 32 ビットの値をよく混ぜる（murmur3 の仕上げ）。上位のビットの違いも下位へ広げる。 */
+function fmix32(h: number): number {
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+/**
+ * 配列の指紋。合成し直すかどうかの判定に使う。値（float32 のビット）ごとに murmur3 の形で混ぜ、種の違う 2 本を並べる。
+ * 値をそのまま xor して掛けるだけの形（FNV を 32 ビットの語に使う形）は上位のビットが下へ伝わらず、符号だけ違う配列
+ * （+1 と −1）や、0 と 1.0・x と 2x の違いがよく衝突して、変えたはずの句が合成し直されなかった。
+ */
 export function hashF32(a: Float32Array, extra: string): string {
   const u = new Uint32Array(a.buffer, a.byteOffset, a.length);
-  let h = 0x811c9dc5;
+  let h1 = 0x811c9dc5, h2 = 0x9747b28c;
   for (let i = 0; i < u.length; i++) {
-    h ^= u[i];
-    h = Math.imul(h, 0x01000193) >>> 0;
+    let k = Math.imul(u[i], 0xcc9e2d51);
+    k = (k << 15) | (k >>> 17);
+    k = Math.imul(k, 0x1b873593);
+    h1 ^= k;
+    h1 = (h1 << 13) | (h1 >>> 19);
+    h1 = (Math.imul(h1, 5) + 0xe6546b64) | 0;
+    h2 ^= Math.imul(k, 0x27d4eb2d) ^ i;
+    h2 = (h2 << 17) | (h2 >>> 15);
+    h2 = (Math.imul(h2, 9) + 0x165667b1) | 0;
   }
-  return `${h.toString(16)}:${a.length}:${extra}`;
+  const n = u.length;
+  return `${fmix32(h1 ^ n).toString(16)}${fmix32(h2 ^ n).toString(16)}:${a.length}:${extra}`;
 }
 
 /** 句のフレームごとに、どの音符に属するか（音素の note から）。 */

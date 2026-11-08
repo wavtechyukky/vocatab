@@ -186,6 +186,8 @@ export class PenStroke {
   private readonly base: Pt[];
   private readonly buckets = new Map<number, Pt>(); // gap ごとに 1 点（同じ所を描き直したら新しい値）
   private last: Pt | null = null;
+  private lo = Infinity;
+  private hi = -Infinity;
 
   constructor(private c: Curve, private def: number, private gap: number) {
     this.base = c.pts.map(([t, v]) => [t, v] as Pt);
@@ -204,8 +206,23 @@ export class PenStroke {
     }
     put(t, v);
     this.last = [t, v];
+    this.lo = Math.min(this.lo, t);
+    this.hi = Math.max(this.hi, t);
     const pts = [...this.buckets.values()].sort((a, b) => a[0] - b[0]);
     replaceRange(this.c, this.base, pts[0][0], pts[pts.length - 1][0], pts, this.def);
+  }
+
+  /**
+   * 一筆を終える。描いた幅が minWidth（刻み）より狭ければ、最後の値を minWidth の幅で保つ。
+   * 縦にまっすぐ描いた所やごく短い一筆が、エンジンのフレーム（約 5.8 ms）より細いトゲになり、
+   * 聞こえなくなるのを防ぐ（エンジンはフレームの頭の値を読み、さらに数フレームでならす）。
+   */
+  finish(minWidth: number): void {
+    if (!this.last || this.hi - this.lo >= minWidth) return;
+    const mid = (this.lo + this.hi) / 2;
+    const half = minWidth / 2;
+    const v = this.last[1];
+    replaceRange(this.c, this.base, mid - half, mid + half, [[mid - half, v], [mid + half, v]], this.def);
   }
 }
 
@@ -232,9 +249,18 @@ export class EraseStroke {
   }
 }
 
-/** 直線: (t0, v0) から (t1, v1) までを直線で置き換える（補間で曲がらないよう細かく点を置く）。外側は元のまま。 */
-export function lineRange(c: Curve, t0: number, v0: number, t1: number, v1: number, gap: number, def: number): void {
+/**
+ * 直線: (t0, v0) から (t1, v1) までを直線で置き換える（補間で曲がらないよう細かく点を置く）。外側は元のまま。
+ * 幅が minWidth（刻み）より狭い直線（縦に引いたもの）は、v1 を minWidth の幅で保つ。
+ */
+export function lineRange(c: Curve, t0: number, v0: number, t1: number, v1: number, gap: number, def: number,
+                          minWidth = 0): void {
   const s = new PenStroke(c, def, gap);
+  if (Math.abs(t1 - t0) < minWidth) {
+    s.add(t1, v1, false);
+    s.finish(minWidth);
+    return;
+  }
   s.add(t0, v0, false);
   s.add(t1, v1, true);
 }
