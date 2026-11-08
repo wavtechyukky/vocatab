@@ -500,10 +500,11 @@ class PrettyPitchLeapSinger:
 
     def dip_scales(self, an: PhraseAnalysis, articulation, overrides: dict) -> dict:
         """ボイスパラメータの「滑舌」（フレームごとの倍率 [T]）→ 子音ごとの既定の凹みの倍率 {句の中の音素の番号: 倍率}。
-        子音の真ん中のフレームの値を使う。手で動かした子音（overrides）と、倍率 1 の子音は入れない。"""
-        if articulation is None or not self.x0_on or an.dips is None:
+        子音の真ん中のフレームの値を使う。手で動かした子音（overrides）と、倍率 1 の子音は入れない。
+        滑舌が来なければ既定値（voiceparams.NEUTRAL、0 = 既定の凹み無し）。"""
+        if not self.x0_on or an.dips is None:
             return {}
-        a = np.asarray(articulation, np.float32)
+        a = np.asarray(articulation if articulation is not None else [VP.NEUTRAL["articulation"]], np.float32)
         out, f = {}, 0
         for j, d in enumerate(an.ph_durs):
             d = int(d)

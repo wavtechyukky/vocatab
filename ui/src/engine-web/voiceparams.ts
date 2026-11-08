@@ -15,7 +15,7 @@ const fr32 = Math.fround;
 export const NEUTRAL: Record<string, number> = {
   tension: 0.0, breathiness: 0.0, gender: 0.0, voicing: 1.0,
   loudness: 0.0, consonant: 0.0, resonance: 0.0, growl: 0.0,
-  articulation: 1.0, // 滑舌（子音の凹みの倍率）。音響モデルの前で効く（ブラウザ版のエンジンはまだ凹みを作らないので使わない）
+  articulation: 0.0, // 滑舌（子音の凹みの既定の深さの倍率。0 = 凹み無し）。音響モデルの前で効く（core.ts の凹み）
 };
 /** 周波数ごとの利得で掛けるもの。voiceparams.SPECTRAL_KEYS */
 export const SPECTRAL_KEYS = ["tension", "gender", "resonance"];

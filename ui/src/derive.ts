@@ -54,10 +54,10 @@ function fromEngine(project: Project, track: Track, phrases: EPhrase[], notes: N
   const pitch = new Float32Array(nFrames).fill(NaN);
   const noDev = new Float32Array(nFrames).fill(NaN);
   const byId = new Map(track.notes.map((n) => [n.id, n]));
-  // 滑舌（子音の凹みの既定の深さの倍率）: トラック全体の値 × 曲線、子音の真ん中の時刻の値（エンジンの dip_scales と同じ）
+  // 滑舌（子音の凹みの既定の深さの倍率）: トラック全体の値 ＋ 曲線、子音の真ん中の時刻の値（エンジンの dip_scales と同じ）
   const spt = secPerTick(project.bpm);
   const artAt = (sec: number): number =>
-    Math.min(2, Math.max(0, (track.base.articulation ?? 1) * evalCurve(track.params.articulation, sec / spt, 1)));
+    Math.min(2, Math.max(0, (track.base.articulation ?? 0) + evalCurve(track.params.articulation, sec / spt, 0)));
   for (const ph of phrases) {
     let f = ph.startFrame;
     const count = new Map<number, number>();

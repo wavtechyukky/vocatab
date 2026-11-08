@@ -29,7 +29,8 @@ SR = 44100
 # パラメータの既定値（何もしない値）
 NEUTRAL = {"tension": 0.0, "breathiness": 0.0, "gender": 0.0, "voicing": 1.0,
            "loudness": 0.0, "consonant": 0.0, "resonance": 0.0, "growl": 0.0,
-           "articulation": 1.0}   # 滑舌: 子音の凹みの既定の深さの倍率（ボコーダの後ではなく音響モデルの前で効く。pipeline.py）
+           "articulation": 0.0}   # 滑舌: 子音の凹みの既定の深さの倍率。0 = 凹み無し、1 = レシピどおり
+                                  # （ボコーダの後ではなく音響モデルの前で効く。pipeline.py の dip_scales）
 # 周波数ごとの利得で掛けるもの
 SPECTRAL_KEYS = ("tension", "gender", "resonance")
 CONSONANT_DB = 12.0
