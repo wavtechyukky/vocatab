@@ -189,6 +189,9 @@ label.check.disabled { opacity: 0.45; cursor: not-allowed; }
 .side-sec { padding: 2px 16px 10px; }
 .side-sec + .side-sec { padding-top: 6px; }
 .side-sec h3 { display: flex; align-items: center; justify-content: space-between; margin: 6px 0 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--muted); }
+/* 声の調整の区分け（F0・声質・発音・その他）の見出し */
+.side-grp { margin: 10px 0 2px; padding-top: 6px; border-top: 1px solid var(--line); font-size: 10.5px; font-weight: 600; color: var(--muted); }
+.side-grp:first-of-type { border-top: none; padding-top: 0; margin-top: 2px; }
 .h-note { font-weight: 400; letter-spacing: 0; font-size: 10.5px; color: var(--muted); }
 .track-title { display: flex; align-items: center; gap: 8px; margin: 2px 0 6px; font-weight: 700; }
 .side-sec.off .fx-graph, .side-sec.off .knob-row, .side-sec.off .seg { opacity: 0.45; }

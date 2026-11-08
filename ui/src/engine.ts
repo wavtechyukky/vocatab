@@ -2,7 +2,7 @@
 import type { SingerInfo } from "./engine-web/types";
 import { getLang } from "./i18n";
 import { FPS, type Project, secPerTick, type Track } from "./model";
-import { evalCurve, MULTIPLY_KEYS, paramDef, VOICE_KEYS } from "./params";
+import { combined, evalCurve, paramDef, VOICE_KEYS } from "./params";
 
 export interface EngineInfo {
   voicebanks: Array<{ key: string; name: string; language: string; singers: SingerInfo[]; default_vocoder: string }>;
@@ -68,8 +68,7 @@ export function phraseParams(ph: EPhrase, track: Track, project: Project): Recor
     const a = new Float32Array(ph.nFrames);
     let neutral = true;
     for (let i = 0; i < ph.nFrames; i++) {
-      const cv = evalCurve(curve, (ph.startFrame + i) / FPS / spt, d.def);
-      const v = Math.min(d.max, Math.max(d.min, MULTIPLY_KEYS.has(key) ? base * cv : base + cv));
+      const v = combined(key, base, evalCurve(curve, (ph.startFrame + i) / FPS / spt, d.def));
       a[i] = v;
       if (v !== d.def) neutral = false;
     }
@@ -172,8 +171,8 @@ function intonationMods(ph: EPhrase, notes: Map<number, { attrs: { iMod?: number
 
 /**
  * 句の最後の F0（log2 Hz）を組み立てる。無声の所も途切れずに作る（ボコーダと音響モデルに渡すため）。
- *   F0 = 土台 + 抑揚 × 抑揚の倍率（音符ごと）× 抑揚の強さ（曲線）
- *        + ビブラートの成分 × ビブラートの変調（音符ごと）× ビブラートの強さ（曲線）+ ピッチのずれ
+ *   F0 = 土台 + 抑揚 × 抑揚の倍率（音符ごと）× 抑揚の強さ（トラック全体の値 × 曲線）
+ *        + ビブラートの成分 × ビブラートの変調（音符ごと）× ビブラートの強さ（トラック全体の値 × 曲線）+ ピッチのずれ
  * 土台は音高の階段を丸めたもの、抑揚は補正後の抑揚の線と土台の差（PrettyPitch の baseline と plain_delta）。
  * ビブラートの変調は今は 0〜2 の倍率として掛ける（1 を超えた分を「幅が一定のビブラート」にするのは後で）。
  */
@@ -184,13 +183,15 @@ export function composeF0(ph: EPhrase, track: Track, project: Project): { log2: 
   const imod = intonationMods(ph, notes, fn);
   const envDef = paramDef("vibratoEnv").def;
   const intDef = paramDef("intonationEnv").def;
+  const vibBase = track.base.vibratoEnv ?? envDef; // 声の調整のつまみ（トラック全体の値）
+  const intBase = track.base.intonationEnv ?? intDef;
   const log2 = new Float32Array(ph.nFrames);
   const noDev = new Float32Array(ph.nFrames);
   for (let i = 0; i < ph.nFrames; i++) {
     const tick = (ph.startFrame + i) / FPS / spt;
     const mod = notes.get(fn[i])?.attrs.vMod ?? 1;
-    const env = evalCurve(track.params.vibratoEnv, tick, envDef);
-    const ie = imod[i] * evalCurve(track.params.intonationEnv, tick, intDef);
+    const env = combined("vibratoEnv", vibBase, evalCurve(track.params.vibratoEnv, tick, envDef));
+    const ie = imod[i] * combined("intonationEnv", intBase, evalCurve(track.params.intonationEnv, tick, intDef));
     const v = ph.base[i] + (ph.plain[i] - ph.base[i]) * ie + ph.vib[i] * mod * env;
     noDev[i] = v;
     log2[i] = v + evalCurve(track.params.pitchDelta, tick, 0) / 1200;

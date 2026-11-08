@@ -40,6 +40,8 @@ export interface VoiceBase {
   resonance: number; // 響き −1〜1
   growl: number; // うなり 0〜1
   articulation: number; // 滑舌: 子音の凹みの既定の深さの倍率 0〜2（既定 0 = 凹み無し、1 = レシピどおり。手で動かした凹みには掛けない）
+  intonationEnv: number; // 抑揚の強さ 0〜2（既定 1。F0 の組み立てで抑揚に掛ける。曲線とは掛け合わせる）
+  vibratoEnv: number; // ビブラートの強さ 0〜2（既定 1。F0 の組み立てでビブラートの成分に掛ける。曲線とは掛け合わせる）
 }
 
 export type ParamKey =
@@ -149,7 +151,7 @@ export function activeNotes(t: Track, beatsPerBar: number): Note[] {
 
 export function defaultBase(): VoiceBase {
   return { loudness: 0, tension: 0, breathiness: 0, gender: 0, voicing: 1, consonant: 0, resonance: 0,
-           growl: 0, articulation: 0 };
+           growl: 0, articulation: 0, intonationEnv: 1, vibratoEnv: 1 };
 }
 
 /** 英語の歌詞の + の読み方。sequential: + ごとに次の 1 音節（既定）、count: + の数だけ音節（++ で 2 音節） */

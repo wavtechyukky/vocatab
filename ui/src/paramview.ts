@@ -10,7 +10,7 @@ import { drawTimeGrid } from "./grid";
 import { t as tr } from "./i18n";
 import { ICONS } from "./icons";
 import { FPS, type ParamKey, secPerTick, type Track, type VoiceBase } from "./model";
-import { EraseStroke, ensureCurve, evalCurve, lineRange, MULTIPLY_KEYS, PARAMS, paramDef, PenStroke } from "./params";
+import { combined, EraseStroke, ensureCurve, evalCurve, lineRange, MULTIPLY_KEYS, PARAM_GROUPS, PARAMS, paramDef, PenStroke } from "./params";
 import type { Store } from "./store";
 import { KEY_W, type View, wheelScrollX } from "./view";
 
@@ -81,8 +81,12 @@ export class ParamPanel {
     const used = new Set(this.tabs);
     const tabHtml = this.tabs.map((key, i) => {
       const d = paramDef(key);
-      const opts = PARAMS.filter((p) => p.key === key || !used.has(p.key))
-        .map((p) => `<option value="${p.key}" ${p.key === key ? "selected" : ""}>${p.label}</option>`).join("");
+      // 選び方は左の帯の「声の調整」と同じ区分け（F0・声質・発音・その他）で並べる
+      const opts = PARAM_GROUPS.map((g) => {
+        const os = g.keys.filter((k) => k === key || !used.has(k))
+          .map((k) => `<option value="${k}" ${k === key ? "selected" : ""}>${paramDef(k).label}</option>`).join("");
+        return os ? `<optgroup label="${g.label}">${os}</optgroup>` : "";
+      }).join("");
       const vis = !this.hidden.has(key);
       return `<div class="pp-tab${key === this.editKey ? " front" : ""}" data-i="${i}" style="--pc:${PARAM_COLOR[key]}">
         <button class="pp-eye${vis ? " on" : ""}" title="${tr("表示/非表示")}">${vis ? EYE_ON : EYE_OFF}</button>
@@ -161,8 +165,7 @@ export class ParamPanel {
     const d = paramDef(key);
     const cv = evalCurve(this.store.track.params[key], tick, d.def);
     const b = baseOf(this.store.track, key);
-    const v = b === null ? cv : MULTIPLY_KEYS.has(key) ? b * cv : b + cv;
-    return Math.min(d.max, Math.max(d.min, v));
+    return b === null ? Math.min(d.max, Math.max(d.min, cv)) : combined(key, b, cv);
   }
 
   /** 描いた（見えている）値から、曲線に書く値を逆算する。 */

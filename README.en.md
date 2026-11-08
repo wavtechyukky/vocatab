@@ -27,7 +27,7 @@ your machine. The same UI can also be driven by a local Python engine (onnxrunti
 - Pitch editing (pitch pen and parameter curves), vibrato and intonation depth per note and as curves
 - AI retakes: re-draw the random numbers of the F0 model (pitch) or the acoustic model (voice) per note; step back to the previous or the first take
 - Phoneme-boundary dragging; consonant dips (a slight level drop at each consonant for clearer diction, depth and width dragged by hand); breaths made from each singer's real inhalations
-- Voice adjustments: loudness, tension, breathiness, gender, voicing, consonant strength, resonance, growl, articulation (per track + curves)
+- Voice adjustments (per track + curves), in four groups: F0 (inflection and vibrato depth), tone (edge, breathiness, formant, voicing, ring, growl), diction (consonants, articulation), other (volume)
 - Effects: a "voice map" equalizer drawn over the voice's own spectrum, a compressor, and a reverb you shape directly
 - Backing tracks (drop wav / mp3 / flac), MusicXML and UST import (UST may use VCV lyrics and breath marks), WAV export (per track or mixdown)
 - UI in Japanese, English, Chinese and Korean; accent colour and mel colour-map settings
@@ -92,7 +92,7 @@ English lyrics (when you add an English voicebank; only Japanese is bundled):
 
 ### Voice adjustments and effects
 
-- The sliders set track-wide values; the parameter curves are added on top. Double-click a slider to reset it.
+- The sliders set track-wide values; the parameter curves are added on top (the multipliers — voicing, intonation depth and vibrato depth — are multiplied instead, and stop at their range, e.g. 0–2). Double-click a slider to reset it. Intonation and vibrato depth also multiply with the note popover's multipliers.
 - Some adjustments only act where they make sense: breathiness on voiced frames, consonant strength on consonants. Where the level exceeds 0.9, a gentle limiter (tanh) keeps it from clipping.
 - Effects (EQ, compressor, reverb) apply at playback and export without re-rendering. The EQ is drawn over the average spectrum of the rendered voice.
 

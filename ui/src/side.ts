@@ -6,6 +6,7 @@ import { singerDisplay } from "./engine";
 import { FxPanel } from "./fxpanel";
 import { t as tx } from "./i18n";
 import { defaultBase, isAudioTrack, type VoiceBase } from "./model";
+import { PARAM_GROUPS } from "./params";
 import type { Renderer } from "./render";
 import type { Store } from "./store";
 import { trackColor } from "./theme";
@@ -74,17 +75,23 @@ export function slider(store: Store, parent: HTMLElement, o: SliderOpts, onDrag:
   return show;
 }
 
-const VOICE_PARAMS: Array<[keyof VoiceBase, string, number, number, number, (v: number) => string, boolean]> = [
-  ["loudness", tx("音量"), -12, 12, 0.1, (v) => `${v.toFixed(1)} dB`, false],
-  ["tension", tx("テンション"), -1, 1, 0.01, (v) => v.toFixed(2), true],
-  ["breathiness", tx("ブレシネス"), -1, 1, 0.01, (v) => v.toFixed(2), true],
-  ["gender", tx("ジェンダー"), -1, 1, 0.01, (v) => v.toFixed(2), true],
-  ["voicing", tx("有声度"), 0, 1, 0.01, (v) => v.toFixed(2), true],
-  ["consonant", tx("子音の強さ"), -1, 1, 0.01, (v) => v.toFixed(2), true],
-  ["resonance", tx("響き"), -1, 1, 0.01, (v) => v.toFixed(2), true],
-  ["growl", tx("うなり"), 0, 1, 0.01, (v) => v.toFixed(2), false],
-  ["articulation", tx("滑舌"), 0, 2, 0.01, (v) => `× ${v.toFixed(2)}`, false],
-];
+// 声の調整のつまみ: 名前・範囲・刻み・値の書き方・ボイスパラメータか（NSF-HiFiGAN では効かない）。並びと見出しは
+// params.ts の PARAM_GROUPS（F0・声質・発音・その他）。F0 の見出しの下なので、抑揚・ビブラートは短い名前にする
+const f2 = (v: number): string => v.toFixed(2);
+const times = (v: number): string => `× ${v.toFixed(2)}`;
+const VOICE_SLIDERS: Partial<Record<keyof VoiceBase, [string, number, number, number, (v: number) => string, boolean]>> = {
+  intonationEnv: [tx("抑揚"), 0, 2, 0.01, times, false],
+  vibratoEnv: [tx("ビブラート"), 0, 2, 0.01, times, false],
+  tension: [tx("テンション"), -1, 1, 0.01, f2, true],
+  breathiness: [tx("ブレシネス"), -1, 1, 0.01, f2, true],
+  gender: [tx("ジェンダー"), -1, 1, 0.01, f2, true],
+  voicing: [tx("有声度"), 0, 1, 0.01, f2, true],
+  resonance: [tx("響き"), -1, 1, 0.01, f2, true],
+  growl: [tx("うなり"), 0, 1, 0.01, f2, false],
+  consonant: [tx("子音の強さ"), -1, 1, 0.01, f2, true],
+  articulation: [tx("滑舌"), 0, 2, 0.01, times, false],
+  loudness: [tx("音量"), -12, 12, 0.1, (v) => `${v.toFixed(1)} dB`, false],
+};
 
 type SecKey = "voice" | "fx" | "render";
 
@@ -254,11 +261,21 @@ export class SidePanel {
     const base = document.createElement("div");
     base.className = "side-sec";
     base.innerHTML = `<h3>${tx("声の調整")}<span class="h-note">${tx("ダブルクリックで元に戻す")}</span></h3>`;
-    for (const [key, label, min, max, step, fmt, vp] of VOICE_PARAMS) {
-      this.refreshers.push(slider(s, base, {
-        label, min, max, step, fmt, def: defaultBase()[key], disabled: vp && s.vocoder === "nsf",
-        get: () => t.base[key], set: (v) => { t.base[key] = v; },
-      }, (on) => { this.dragging = on; }));
+    // 区分けごとの見出しとつまみ（F0・声質・発音・その他。その他の下にブレスのボタンも置く）
+    for (const g of PARAM_GROUPS) {
+      const keys = g.keys.filter((k) => k in VOICE_SLIDERS) as Array<keyof VoiceBase>;
+      if (!keys.length) continue;
+      const head2 = document.createElement("div");
+      head2.className = "side-grp";
+      head2.textContent = g.label;
+      base.appendChild(head2);
+      for (const key of keys) {
+        const [label, min, max, step, fmt, vp] = VOICE_SLIDERS[key]!;
+        this.refreshers.push(slider(s, base, {
+          label, min, max, step, fmt, def: defaultBase()[key], disabled: vp && s.vocoder === "nsf",
+          get: () => t.base[key], set: (v) => { t.base[key] = v; },
+        }, (on) => { this.dragging = on; }));
+      }
     }
     // ブレス: 音素のタイミングのパネルで 1 つずつ入れるほか、ここでまとめて入れる・消す。
     // ブレスの束はエンジンから後で届くので（breathContext）、押せるかどうかはエンジンがつながっているかだけで決める

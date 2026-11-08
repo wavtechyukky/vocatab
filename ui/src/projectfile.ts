@@ -8,8 +8,9 @@ import { t } from "./i18n";
 import { defaultBase, isAudioTrack, NOTE_ATTR_KEYS, type NoteAttrs, type Project, trackRegion } from "./model";
 
 export const FORMAT = "svs-editor-project";
-// 版 2: 子音の凹み（音符の phDip）・滑舌（声の設定 base.articulation と曲線 params.articulation）・英語の + の読み方
-// （lyricStyle）を足した。版 1 のファイルはそのまま読める（無い値は既定値: 凹みは既定、滑舌 0、+ は次の音節へ）。
+// 版 2: 子音の凹み（音符の phDip）・滑舌（声の設定 base.articulation と曲線 params.articulation）・抑揚とビブラートの強さの
+// トラック全体の値（base.intonationEnv・base.vibratoEnv。曲線と掛け合わせる）・英語の + の読み方（lyricStyle）を足した。
+// 版 1 のファイルはそのまま読める（無い値は既定値: 凹みは既定、滑舌 0、抑揚・ビブラートの強さ 1、+ は次の音節へ）。
 // 版を上げたので、前の版のアプリは版 2 のファイルを「新しいバージョン」として開かない（足した値を黙って落とさない）
 export const FORMAT_VERSION = 2;
 

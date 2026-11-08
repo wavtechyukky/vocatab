@@ -24,8 +24,6 @@ export const PARAMS: ParamDef[] = [
     top: "× 2", bottom: "× 0", voiceParam: false, fmt: (v) => `× ${v.toFixed(2)}` },
   { key: "vibratoEnv", label: t("ビブラートの強さ"), min: 0, max: 2, def: 1, viewMin: 0, viewMax: 2,
     top: "× 2", bottom: "× 0", voiceParam: false, fmt: (v) => `× ${v.toFixed(2)}` },
-  { key: "loudness", label: t("音量"), min: -48, max: 12, def: 0, viewMin: -24, viewMax: 12,
-    top: "+12 dB", bottom: "−24 dB", voiceParam: false, fmt: (v) => `${v.toFixed(1)} dB` },
   { key: "tension", label: t("テンション"), min: -1, max: 1, def: 0, viewMin: -1, viewMax: 1,
     top: t("張る"), bottom: t("緩む"), voiceParam: true, fmt: (v) => v.toFixed(2) },
   { key: "breathiness", label: t("ブレシネス"), min: -1, max: 1, def: 0, viewMin: -1, viewMax: 1,
@@ -34,24 +32,43 @@ export const PARAMS: ParamDef[] = [
     top: t("男性的"), bottom: t("女性的"), voiceParam: true, fmt: (v) => v.toFixed(2) },
   { key: "voicing", label: t("有声度"), min: 0, max: 1, def: 1, viewMin: 0, viewMax: 1,
     top: t("有声"), bottom: t("無声"), voiceParam: true, fmt: (v) => v.toFixed(2) },
-  { key: "consonant", label: t("子音の強さ"), min: -1, max: 1, def: 0, viewMin: -1, viewMax: 1,
-    top: t("強い"), bottom: t("弱い"), voiceParam: true, fmt: (v) => v.toFixed(2) },
   { key: "resonance", label: t("響き"), min: -1, max: 1, def: 0, viewMin: -1, viewMax: 1,
     top: t("響く"), bottom: t("こもる"), voiceParam: true, fmt: (v) => v.toFixed(2) },
   { key: "growl", label: t("うなり"), min: 0, max: 1, def: 0, viewMin: 0, viewMax: 1,
     top: t("強い"), bottom: t("なし"), voiceParam: false, fmt: (v) => v.toFixed(2) },
+  { key: "consonant", label: t("子音の強さ"), min: -1, max: 1, def: 0, viewMin: -1, viewMax: 1,
+    top: t("強い"), bottom: t("弱い"), voiceParam: true, fmt: (v) => v.toFixed(2) },
   // 滑舌: 子音の凹み（音素パネルの谷）の既定の深さに掛ける倍率。0 = 凹み無し（既定）、1 = ボイスバンクのレシピどおり、
   // 2 = その 2 倍。手で動かした凹みには掛けない。音響モデルの前で効く。トラック全体の値と曲線は足し合わせる
   { key: "articulation", label: t("滑舌"), min: 0, max: 2, def: 0, viewMin: 0, viewMax: 2,
     top: "× 2", bottom: "× 0", voiceParam: false, fmt: (v) => `× ${v.toFixed(2)}` },
+  { key: "loudness", label: t("音量"), min: -48, max: 12, def: 0, viewMin: -24, viewMax: 12,
+    top: "+12 dB", bottom: "−24 dB", voiceParam: false, fmt: (v) => `${v.toFixed(1)} dB` },
+];
+
+/**
+ * パラメータの区分け（左の帯の「声の調整」の見出しと、パラメータのパネルの選び方で同じ並び）。
+ * F0 = F0 の組み立てで使うもの、声質 = ボコーダの出力の調波・雑音の枝に掛けるもの、発音 = 子音に効くもの、その他 = 音量
+ */
+export const PARAM_GROUPS: Array<{ label: string; keys: ParamKey[] }> = [
+  { label: "F0", keys: ["pitchDelta", "intonationEnv", "vibratoEnv"] },
+  { label: t("声質"), keys: ["tension", "breathiness", "gender", "voicing", "resonance", "growl"] },
+  { label: t("発音"), keys: ["consonant", "articulation"] },
+  { label: t("その他"), keys: ["loudness"] },
 ];
 
 /** エンジンへ渡すボイスパラメータ（ピッチのずれとビブラートの強さは F0 の組み立てで使うので除く）。 */
 export const VOICE_KEYS: ParamKey[] = ["tension", "breathiness", "gender", "voicing", "loudness",
                                        "consonant", "resonance", "growl", "articulation"];
 
-/** トラック全体の値と曲線を掛け合わせるパラメータ（ほかは足し合わせる）。既定値は 1 */
-export const MULTIPLY_KEYS: ReadonlySet<ParamKey> = new Set<ParamKey>(["voicing"]);
+/** トラック全体の値と曲線を掛け合わせるパラメータ（ほかは足し合わせる）。既定値は 1。合わせた値は範囲の端で止める */
+export const MULTIPLY_KEYS: ReadonlySet<ParamKey> = new Set<ParamKey>(["voicing", "intonationEnv", "vibratoEnv"]);
+
+/** トラック全体の値と曲線を合わせた値（掛け合わせか足し合わせ。範囲の端で止める。画面の曲線・エンジンへ渡す値・F0 の組み立てで同じ） */
+export function combined(key: ParamKey, base: number, curveValue: number): number {
+  const d = paramDef(key);
+  return Math.min(d.max, Math.max(d.min, MULTIPLY_KEYS.has(key) ? base * curveValue : base + curveValue));
+}
 
 export const paramDef = (key: ParamKey): ParamDef => PARAMS.find((p) => p.key === key)!;
 
