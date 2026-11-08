@@ -125,9 +125,13 @@ def analyze(r: AnalyzeReq):
             _cache.move_to_end(key)
         phs = []
         for j, (p, d, ni) in enumerate(zip(an.phonemes, an.ph_durs, an.note_index)):
-            phs.append({"ph": p, "frames": int(d), "note": ids[min(ni, len(ids) - 1)] if ni >= 0 and ids else None,
-                        "shift": float(an.shifts[j]) if an.shifts else 0.0,
-                        "nucleus": bool(eng.ps.is_nucleus(p))})   # 画面の色分け（母音など）
+            e = {"ph": p, "frames": int(d), "note": ids[min(ni, len(ids) - 1)] if ni >= 0 and ids else None,
+                 "shift": float(an.shifts[j]) if an.shifts else 0.0,
+                 "nucleus": bool(eng.ps.is_nucleus(p))}   # 画面の色分け（母音など）
+            dip = an.dips[j] if an.dips is not None else None
+            if dip is not None:                           # 子音の既定の凹み（深さ dB・広さ）。画面が描く
+                e["dip"] = {"db": float(20.0 * np.log10(max(dip["amp"], 1e-4))), "w": float(dip["w"])}
+            phs.append(e)
         out.append({"key": key, "note_ids": ids, "start_frame": int(round(an.start_sec * fr)),
                     "start_sec": float(an.start_sec), "seed": int(an.seed),   # ブラウザ版（protocol.ts）と同じ項目
                     "n_frames": int(an.ph_durs.sum()), "phonemes": phs,
@@ -146,6 +150,8 @@ class SynthReq(BaseModel):
     mel_out: bool = True       # 出た音の mel（③）も返すか
     mel_plain: bool = False    # ボイスパラメータを掛けない音の mel（②）も返すか
     retake_mel: dict[str, int] = {}  # 音符の id → 種（AI リテイクの声。0 = 元のテイク）
+    # 動かした子音の凹み: 音符の id → {音符の中の音素の番号: {"db": 深さ, "w": 広さ}}（どちらか片方でもよい）
+    ph_dip: dict[str, dict[str, dict[str, float]]] = {}
 
 
 @app.post("/api/synthesize")
@@ -161,8 +167,9 @@ def synthesize(r: SynthReq):
     params = {k: unb64(v) for k, v in r.params.items()}
     pos = {str(nid): i for i, nid in enumerate(ids)}
     mel_rt = {pos[k]: int(s) for k, s in r.retake_mel.items() if k in pos and int(s)}
+    dips = {pos[k]: {int(i): v for i, v in d.items()} for k, d in r.ph_dip.items() if k in pos and d}
     res = eng.synthesize(an, f0_hz, r.singer, VOCS[r.vocoder], params=params, want_plain=r.mel_plain,
-                         mel_retakes=mel_rt)
+                         mel_retakes=mel_rt, ph_dips=dips)
     T = int(an.ph_durs.sum())
 
     def mel_of(w):

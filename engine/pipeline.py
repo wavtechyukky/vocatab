@@ -21,6 +21,7 @@ import numpy as np
 import onnxruntime as ort
 
 from . import voiceparams as VP
+from . import x0shape
 from .voicebank import VocoderSpec, Voicebank
 
 PAU = "pau"
@@ -58,6 +59,7 @@ def _retake(noise: np.ndarray, frame_note: np.ndarray, retakes: dict, salt: int)
 
 MIN_PH_SEC = 0.012  # 手で動かしても、音素はこれより短くしない
 PAU_MIN_FRAMES = 4  # pau の後の音素の頭を左へ動かしても、pau はこのフレーム数より短くしない（ボコーダの波形の染み出し）
+DIP_DB_MIN = -5.0   # 画面で動かせる子音の凹みの深さの限界（名目 dB。これより深いと出力の mel がほぼ無音になる）
 PAU_MIN_EPS = 1e-4  # 秒。フレームへの丸め（境目ごとの round）で float32 の誤差により 3 フレームにならないための足し
 
 
@@ -121,6 +123,9 @@ class PhraseAnalysis:
     # 抑揚の土台（log2 Hz）[T]: 音高の階段を σ 20 ms で丸めたもの（PrettyPitch の baseline）。
     # 抑揚 = plain_log2 − base_log2。画面の「抑揚の強さ」はこの差に掛ける
     base_log2: np.ndarray | None = None
+    # 子音ごとの既定の凹み（engine/x0shape.py の dips。{"amp": 谷の底の振幅, "w": 広さ}、子音でなければ None）。
+    # 凹みを掛けないボイスバンクでは None
+    dips: list | None = None
 
 
 class PrettyPitchLeapSinger:
@@ -159,6 +164,13 @@ class PrettyPitchLeapSinger:
         self.s_f0 = _session(m["f0"])
         self.s_ac = _session(m["acoustic"])
         self.ac_inputs = {i.name for i in self.s_ac.get_inputs()}
+        # 子音の凹み（voicebank.yaml の x0_shape、engine/x0shape.py）。既定は擬似 mel に掛ける（音響 ONNX の x0_loggain）。
+        # apply: mel なら、同じ曲線を出力の mel に掛ける（x0_loggain の無い ONNX でも使える）
+        cfg = vb.raw.get("x0_shape")
+        self.x0_cfg = cfg if isinstance(cfg, dict) else None
+        self.x0_mel = bool(self.x0_cfg) and str(self.x0_cfg.get("apply", "")) == "mel"
+        self.x0_on = (self.x0_cfg is not None and (self.x0_mel or "x0_loggain" in self.ac_inputs)
+                      and x0shape.params_of(self.x0_cfg) is not None and x0shape.classes_of(vb.language) is not None)
         self.cons_inputs = [i.name for i in self.s_cons.get_inputs()]
         self._vocoders: dict[str, ort.InferenceSession] = {}
         self._ac_cache = _LRU(64)          # ⑤⑥ の結果（mel ①）
@@ -392,13 +404,39 @@ class PrettyPitchLeapSinger:
             ph_durs, _ = dp.to_frames(seq.dur_sec, self.frame_rate)
             f0o = self._f0(seq, spk_id, seed, note_index, f0_retakes)  # F0 も動かした長さで作る
         T = len(f0o["f0_hz"])
-        ph_durs = R._align_durs(ph_durs, T)
+        ph_durs = np.asarray(R._align_durs(ph_durs, T), np.int64)
+        dips = None
+        if self.x0_on:
+            dips = x0shape.dips(list(seq.phonemes), ph_durs, self.x0_cfg, self.vb.language,
+                                lambda p: p != PAU and not ps.is_nucleus(p))
         return PhraseAnalysis(
-            phonemes=list(seq.phonemes), ph_durs=np.asarray(ph_durs, np.int64), start_sec=float(start_sec),
+            phonemes=list(seq.phonemes), ph_durs=ph_durs, start_sec=float(start_sec),
             plain_log2=np.log2(np.maximum(f0o["plain_hz"], 1e-3)).astype(np.float32),
             vib_log2=np.asarray(f0o["vib_delta"], np.float32), uv=np.asarray(f0o["uv"], np.float32),
             note_index=note_index, seed=int(seed), shifts=applied,
-            base_log2=np.asarray(f0o["baseline_log2"], np.float32))
+            base_log2=np.asarray(f0o["baseline_log2"], np.float32), dips=dips)
+
+    def dip_overrides(self, an: PhraseAnalysis, ph_dips: dict | None) -> dict:
+        """画面で動かした凹み {句の中の音符の番号: {音符の中の音素の番号: {"db": 深さ, "w": 広さ}}}
+        → x0shape.loggain の overrides {句の中の音素の番号: {"amp": 振幅, "w": 広さ}}。片方だけのときは既定で埋める。
+        深さ（dB）はまだ名目の値（擬似 mel に掛ける深さ）。出力の深さへの変換表は後で入れる。"""
+        if not ph_dips or not self.x0_on or an.dips is None:
+            return {}
+        out, count = {}, {}
+        for j, ni in enumerate(an.note_index):
+            if ni < 0:
+                continue
+            idx = count.get(ni, 0)
+            count[ni] = idx + 1
+            o = (ph_dips.get(ni) or {}).get(idx)
+            d = an.dips[j]
+            if not o or d is None:
+                continue
+            db, w = o.get("db"), o.get("w")
+            amp = d["amp"] if db is None else float(10.0 ** (min(0.0, max(DIP_DB_MIN, float(db))) / 20.0))
+            w = d["w"] if w is None else float(min(1.0, max(0.0, float(w))))
+            out[j] = {"amp": amp, "w": w}
+        return out
 
     # ── ⑤⑥⑦ 音響・mel の後処理・ボコーダ ───────────────────
     def vocoder(self, spec: VocoderSpec) -> ort.InferenceSession:
@@ -407,11 +445,13 @@ class PrettyPitchLeapSinger:
         return self._vocoders[spec.key]
 
     def synthesize(self, an: PhraseAnalysis, f0_hz: np.ndarray, spk_id: int, voc: VocoderSpec,
-                   params: dict | None = None, want_plain: bool = False, mel_retakes: dict | None = None) -> dict:
+                   params: dict | None = None, want_plain: bool = False, mel_retakes: dict | None = None,
+                   ph_dips: dict | None = None) -> dict:
         """⑤〜⑦: 最後の F0（画面で組み立てたもの）とボイスパラメータ（フレームごと）から mel と波形を作る。
 
         params: {名前: [T] の配列}（voiceparams.NEUTRAL の名前。無いものは既定値）
         want_plain: ボイスパラメータを掛けない音（mel の ② 用）も返す
+        ph_dips: 画面で動かした子音の凹み（dip_overrides の入力の形）
         戻り値: mel_in（ボコーダに入れた mel）[128, T]、wav [256·T]、wav_plain（頼まれたとき）、uv_hard [T]
         """
         params = params or {}
@@ -426,11 +466,15 @@ class PrettyPitchLeapSinger:
         # 段ごとの取り置き: ⑤⑥ は F0・歌い手が同じなら、⑦ はさらにボコーダが同じなら使い回す
         # （ボイスパラメータはどれもボコーダの出力の後で掛けるので、動かしても混ぜ直すだけになる）
         rt = {int(k): int(s) for k, s in (mel_retakes or {}).items() if int(s)}
+        ov = self.dip_overrides(an, ph_dips)
+        sc = self.dip_scales(an, params.get("articulation"), ov)
         with self.lock:
-            ac_key = _digest(an.seed, spk_id, tokens, an.ph_durs, f0, sorted(rt.items()))
+            ac_key = _digest(an.seed, spk_id, tokens, an.ph_durs, f0, sorted(rt.items()),
+                             sorted((j, round(o["amp"], 6), round(o["w"], 6)) for j, o in ov.items()),
+                             sorted((j, round(m, 4)) for j, m in sc.items()))
             mel_in = self._ac_cache.get(ac_key)
             if mel_in is None:
-                mel_in = self._acoustic(an, tokens, f0, spk_id, uv_hard, rt)
+                mel_in = self._acoustic(an, tokens, f0, spk_id, uv_hard, rt, ov, sc)
                 self._ac_cache.put(ac_key, mel_in)
             voc_key = _digest(ac_key, voc.key)
             hit = self._voc_cache.get(voc_key)
@@ -454,9 +498,30 @@ class PrettyPitchLeapSinger:
         wav = VP.finish(wav[:T * 256], params, T)                           # うなり・音量・リミッタ
         return {"mel_in": np.asarray(mel_in, np.float32), "wav": wav, "wav_plain": plain, "uv_hard": uv_hard}
 
-    def _acoustic(self, an: PhraseAnalysis, tokens, f0, spk_id: int, uv_hard, retakes=None) -> np.ndarray:
+    def dip_scales(self, an: PhraseAnalysis, articulation, overrides: dict) -> dict:
+        """ボイスパラメータの「滑舌」（フレームごとの倍率 [T]）→ 子音ごとの既定の凹みの倍率 {句の中の音素の番号: 倍率}。
+        子音の真ん中のフレームの値を使う。手で動かした子音（overrides）と、倍率 1 の子音は入れない。"""
+        if articulation is None or not self.x0_on or an.dips is None:
+            return {}
+        a = np.asarray(articulation, np.float32)
+        out, f = {}, 0
+        for j, d in enumerate(an.ph_durs):
+            d = int(d)
+            if an.dips[j] is not None and j not in overrides and d > 0 and len(a):
+                m = float(min(2.0, max(0.0, a[min(len(a) - 1, f + d // 2)])))
+                db0 = 20.0 * np.log10(max(an.dips[j]["amp"], 1e-4))
+                if db0 < 0.0:
+                    m = min(m, DIP_DB_MIN / db0)           # 倍率を掛けても −5 dB より深くしない（画面と同じ）
+                if m != 1.0:
+                    out[j] = m
+            f += d
+        return out
+
+    def _acoustic(self, an: PhraseAnalysis, tokens, f0, spk_id: int, uv_hard, retakes=None, dips=None,
+                  scales=None) -> np.ndarray:
         """⑤ 音響モデル → ⑥ mel の後処理。戻り値はボコーダに入れる mel [128, T]。
-        retakes: {句の中の音符の番号: 種}（AI リテイク。その音符の所だけ励振の雑音を差し替える）"""
+        retakes: {句の中の音符の番号: 種}（AI リテイク。その音符の所だけ励振の雑音を差し替える）
+        dips: 子音の凹みの上書き（x0shape.loggain の overrides）、scales: 既定の凹みの倍率（滑舌）"""
         T = len(f0)
         feeds = {"tokens": tokens[None], "durations": an.ph_durs[None], "f0": np.asarray(f0, np.float32)[None],
                  "spk_embed": self.spk_vec[spk_id][None]}
@@ -466,9 +531,15 @@ class PrettyPitchLeapSinger:
                 fn = np.repeat(np.repeat(np.asarray(an.note_index), an.ph_durs)[:T], 256)
                 _retake(z, fn, retakes, salt=1)
             feeds["exc_noise"] = z
+        # 子音の凹み: フレームごとの ln(gain)。既定は擬似 mel に（x0_loggain）、apply: mel なら出力の mel に足す
+        g = x0shape.loggain(an.phonemes, an.ph_durs, self.x0_cfg, self.vb.language, dips, scales) if self.x0_on else None
+        if "x0_loggain" in self.ac_inputs:
+            feeds["x0_loggain"] = (g[:T] if g is not None and not self.x0_mel else np.zeros(T, np.float32))[None]
         mel = self.s_ac.run(["mel"], feeds)[0]
         mel = np.asarray(mel[0], np.float32).T                                       # [128, T]
         mel_in = self.R.mel_postprocess(SimpleNamespace(frame_rate=self.frame_rate), mel, uv_hard)
+        if self.x0_mel and g is not None:
+            mel_in = mel_in + g[:T][None, :]
         return np.asarray(mel_in, np.float32)
 
     def _vocode(self, voc: VocoderSpec, mel_in: np.ndarray, f0: np.ndarray, uv_hard: np.ndarray,

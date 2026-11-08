@@ -7,9 +7,9 @@ grid: {sample_rate: 44100, hop: 256}
 code:                        # ホスト側の処理（楽譜の読み込み・持続長の後処理・F0 の baseline と補正）は PrettyPitch の Python を使う
   prettypitch: ../../../PrettyPitch   # = このリポジトリの隣の PrettyPitch（環境変数 PRETTYPITCH_ROOT があればそちら）
 models:
-  acoustic: acoustic.onnx              # LeapSinger v2.0.0 の重み（release/v2.0.0/3singer_v2_student.pt と同じ値）を tools/export_acoustic.py で
-                                       # 書き出し（励振の雑音をグラフ内の乱数でなく入力 exc_noise にする。リテイクの種が効き Python 版とビット一致）、
-                                       # tools/acoustic_loop.py で倍音の和を Loop に畳んだもの（出力は同じ、メモリが 5 分の 1）
+  acoustic: acoustic.onnx              # LeapSinger v2.0.0 の重み（release/v2.0.0/3singer_v2_student.pt）を LeapSinger の export/cli.py で
+                                       # --hop 256 --speaker embed --exc-noise --x0-gain として書き出したもの。励振の雑音は入力 exc_noise
+                                       # （リテイクの種が効く）、擬似 mel の凹みは入力 x0_loggain（0 なら凹みなしと同じ出力）。倍音の和は Loop
   speakers: speakers.json              # acoustic.onnx の spk_embed に渡す話者ベクトル（id → 256 次元）と音素の一覧
   f0: f0.onnx                          # PrettyPitch checkpoints/f0_3singer.pt（DDPM 10 step）+ f0.json
   cons_dur: cons_dur.onnx              # PrettyPitch checkpoints/cons_dur_3singer.pt + cons_dur.json
@@ -18,6 +18,19 @@ singers:                     # 話者 id・内部の名前（プロジェクト�
   - {id: 0, name: oniku, display: {ja: 御丹宮くるみ, en: Oniku Kurumi}}
   - {id: 1, name: natsume, display: {ja: 夏目悠李, en: Natsume Yuuri}}
   - {id: 2, name: ritsu, display: {ja: 波音リツ, en: Namine Ritsu}}
+x0_shape:                    # 子音の凹み（擬似 mel の大きさを子音で下げ、発音をはっきりさせる。engine/x0shape.py）。enabled: false で切る
+  burst: true                # 破裂・破擦: 頭から開放位置まで ν 字の谷
+  burst_shape: nu            # 促音 cl は閉鎖のまま（台形）
+  W: 6
+  floor: 0.891               # 谷の底の振幅（名目 −1 dB。音響モデルの中で広がるので、出力ではもっと深い）。2026-11-08 に −3 dB から変更
+  pos_stop: 0.3              # 開放位置（破裂。子音の長さに対する割合）
+  pos_affr: 0.1              # 開放位置（破擦: ch ts）
+  cy_frac: 0.55              # 拗音などは子音の前半だけ
+  nasal_exc: true            # 鼻音の直後の有声破裂（ん+が など）は触らない
+  fric: true                 # 有声の摩擦・破擦（z j）: ν 字の凹み
+  fric_depth: 0.891          # 谷の底の振幅（名目 −1 dB）
+  son: true                  # 鳴り子音（n ny m my y r ry w v）: ν 字の凹み
+  son_depth: 0.891
 default_vocoder: nhvsing_v3_2_1
 breaths: breaths.json        # ブレスの mel の束（tools/breaths/build_breath_bank.py が書く。bin はこの中に書いてある）
 credits: >-
