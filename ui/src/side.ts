@@ -83,6 +83,7 @@ const VOICE_PARAMS: Array<[keyof VoiceBase, string, number, number, number, (v: 
   ["consonant", tx("子音の強さ"), -1, 1, 0.01, (v) => v.toFixed(2), true],
   ["resonance", tx("響き"), -1, 1, 0.01, (v) => v.toFixed(2), true],
   ["growl", tx("うなり"), 0, 1, 0.01, (v) => v.toFixed(2), false],
+  ["articulation", tx("滑舌"), 0, 2, 0.01, (v) => `× ${v.toFixed(2)}`, false],
 ];
 
 type SecKey = "voice" | "fx" | "render";

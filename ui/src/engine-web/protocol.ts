@@ -42,6 +42,8 @@ export interface SynthReq {
   mel_out: boolean;
   mel_plain: boolean;
   retake_mel: Record<string, number>;
+  /** 動かした子音の凹み: 音符の id → {音符の中の音素の番号: 深さ dB・広さ}（ブラウザ版のエンジンはまだ使わない） */
+  ph_dip?: Record<string, Record<string, { db?: number; w?: number }>>;
 }
 
 export interface SynthResp {

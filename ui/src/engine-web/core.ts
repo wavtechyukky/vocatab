@@ -10,6 +10,7 @@ import { applyRetakes, normalNoise } from "./rng";
 import { phrasesFromNotes } from "./score";
 import { acousticFeeds, finishSynth, fromFloat16Bits, melPostprocess, nhvFeeds, nsfFeeds, phoneSetOf, toFloat16Bits,
          type VocOut } from "./synthhost";
+import { f32 } from "./types";
 import type { BreathBank, Feeds, Phrase, VoicebankWeb, VocoderWeb, WebIndex } from "./types";
 
 const MEL_FLOOR = Math.fround(Math.log(1e-5)); // mel の床（pau・詰め物）
@@ -441,7 +442,10 @@ export class Engine {
         }
       }
       const a = acousticFeeds(vb, { phonemes: an.phonemes, phDurs: an.phDurs, uv: an.uv, noteIndex: an.noteIndex }, f0Hz, r.singer, exc);
-      const mel = (await this.run(await this.session(vb.key, "acoustic"), a.feeds, ["mel"])).mel;
+      const acSess = await this.session(vb.key, "acoustic");
+      // 子音の凹みの入力（x0_loggain）を持つモデル: ブラウザ版のエンジンはまだ凹みを作らないので、0（凹みなし）を渡す
+      if ((acSess.inputNames as string[]).includes("x0_loggain")) a.feeds.x0_loggain = f32(new Float32Array(T), [1, T]);
+      const mel = (await this.run(acSess, a.feeds, ["mel"])).mel;
       ac = { melIn: melPostprocess(mel, T, a.uvHard, vb.frame_rate), uvHard: a.uvHard, cons: a.cons, f0: a.f0 };
       this.acCache.put(acKey, ac, ac.melIn.byteLength + ac.uvHard.byteLength + ac.cons.byteLength + ac.f0.byteLength, r.key);
     }

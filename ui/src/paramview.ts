@@ -10,7 +10,7 @@ import { drawTimeGrid } from "./grid";
 import { t as tr } from "./i18n";
 import { ICONS } from "./icons";
 import { type ParamKey, secPerTick, type Track, type VoiceBase } from "./model";
-import { EraseStroke, ensureCurve, evalCurve, lineRange, PARAMS, paramDef, PenStroke } from "./params";
+import { EraseStroke, ensureCurve, evalCurve, lineRange, MULTIPLY_KEYS, PARAMS, paramDef, PenStroke } from "./params";
 import type { Store } from "./store";
 import { KEY_W, type View, wheelScrollX } from "./view";
 
@@ -22,6 +22,7 @@ const PH_GAP = 5; // 音素の境目の線・塗りの、上下の隙間（px）
 const PARAM_COLOR: Record<ParamKey, string> = {
   pitchDelta: "#ffa3cd", intonationEnv: "#c6e86a", vibratoEnv: "#f5c542", loudness: "#7fd0c6", tension: "#ff8a5c", breathiness: "#9fc0d6",
   gender: "#b38cff", voicing: "#5b8cff", consonant: "#f0896b", resonance: "#e3e6ff", growl: "#ff5d73",
+  articulation: "#7ee0a1",
 };
 /** 手前から k 枚目（0 = いちばん手前）の濃さ。 */
 const layerAlpha = (k: number): number => (k === 0 ? 1 : k === 1 ? 0.6 : Math.max(0.12, 0.6 * 0.6 ** (k - 1)));
@@ -160,7 +161,7 @@ export class ParamPanel {
     const d = paramDef(key);
     const cv = evalCurve(this.store.track.params[key], tick, d.def);
     const b = baseOf(this.store.track, key);
-    const v = b === null ? cv : key === "voicing" ? b * cv : b + cv;
+    const v = b === null ? cv : MULTIPLY_KEYS.has(key) ? b * cv : b + cv;
     return Math.min(d.max, Math.max(d.min, v));
   }
 
@@ -168,7 +169,7 @@ export class ParamPanel {
   private toCurve(key: ParamKey, v: number): number {
     const b = baseOf(this.store.track, key);
     if (b === null) return v;
-    if (key === "voicing") return b > 1e-3 ? v / b : v;
+    if (MULTIPLY_KEYS.has(key)) return b > 1e-3 ? v / b : v;
     return v - b;
   }
 

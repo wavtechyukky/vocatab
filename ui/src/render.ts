@@ -346,11 +346,15 @@ export class Renderer {
           // AI リテイク（声）: この句の音符のうち取り直したものの種
           const byId = new Map(track.notes.map((n) => [n.id, n]));
           const retakeMel: Record<string, number> = {};
+          // 動かした子音の凹み: この句の音符のうち、凹みを動かしたもの
+          const phDip: Record<string, Record<string, { db?: number; w?: number }>> = {};
           for (const id of ph.noteIds) {
             const s = byId.get(id)?.attrs.retakeMel;
             if (s) retakeMel[String(id)] = s;
+            const d = byId.get(id)?.phDip;
+            if (d && Object.keys(d).length) phDip[String(id)] = d;
           }
-          const h = hashF32(log2, `${voc}|${singer}|${ps}|${JSON.stringify(retakeMel)}`);
+          const h = hashF32(log2, `${voc}|${singer}|${ps}|${JSON.stringify(retakeMel)}|${JSON.stringify(phDip)}`);
           // ②・③ の行をオンにしたばかりで mel が無い句は、同じ音でも頼み直す（エンジンの取り置きに当たるので速い）
           if (ph.f0Hash === h && ph.wav && (!plain || ph.melPlain) && (!out || ph.melOut)) continue;
           ph.status = "合成中";
@@ -359,7 +363,7 @@ export class Renderer {
           try {
             // 句の鍵にボイスバンクが入っているので、ボイスバンクを替えた句は解析から作り直しになる
             j = await this.engine.synthesize({ voicebank: this.voicebankOf(track).key, singer, key: ph.key, f0_log2: log2, vocoder: voc, params,
-                                               mel_out: out, mel_plain: plain, retake_mel: retakeMel });
+                                               mel_out: out, mel_plain: plain, retake_mel: retakeMel, ph_dip: phDip });
           } catch (e) {
             ph.status = "失敗";
             this.error = tx("合成に失敗: {e}", { e: e instanceof Error ? e.message : String(e) });

@@ -16,9 +16,12 @@ export interface PhoneSeg {
   baseStart: number; // 手で動かす前の頭
   movable: boolean; // 頭を動かせるか（pau の頭 = 句の最後の音素の終わりは動かせない）
   edited: boolean;
+  /** 子音の凹み（エンジンが凹みを返すボイスバンクの子音だけ）: 今の深さ dB・広さ（子音の長さに対する割合）、手で動かしたか */
+  dip?: { db: number; w: number; edited: boolean };
 }
 
 const MIN_PH = 0.012; // 音素の最短（秒）
+export const DIP_DB_MIN = -5; // 子音の凹みの深さの限界（名目 dB。engine/pipeline.py の DIP_DB_MIN と同じ）
 const PAU_MIN = 4 / FPS + 1e-4; // pau の後の頭を左へ動かしても、pau はこれより短くしない（engine/pipeline.py の PAU_MIN_FRAMES）
 
 export interface Derived {
@@ -51,6 +54,10 @@ function fromEngine(project: Project, track: Track, phrases: EPhrase[], notes: N
   const pitch = new Float32Array(nFrames).fill(NaN);
   const noDev = new Float32Array(nFrames).fill(NaN);
   const byId = new Map(track.notes.map((n) => [n.id, n]));
+  // 滑舌（子音の凹みの既定の深さの倍率）: トラック全体の値 × 曲線、子音の真ん中の時刻の値（エンジンの dip_scales と同じ）
+  const spt = secPerTick(project.bpm);
+  const artAt = (sec: number): number =>
+    Math.min(2, Math.max(0, (track.base.articulation ?? 1) * evalCurve(track.params.articulation, sec / spt, 1)));
   for (const ph of phrases) {
     let f = ph.startFrame;
     const count = new Map<number, number>();
@@ -67,9 +74,15 @@ function fromEngine(project: Project, track: Track, phrases: EPhrase[], notes: N
         const want = byId.get(p.note)?.phShift?.[idx] ?? 0;
         // 動かせる頭: 前の音素とつながっている頭と、pau の後の頭（句の頭・句の途中の休符の後）。
         // pau の後は、最初に作られた pau の中だけで左へ伸ばせる（pau は PAU_MIN 残す。エンジンの _apply_shifts と同じ）
-        const seg: PhoneSeg = { ph: p.ph, start: s, end: (f + p.frames) / FPS, noteId: p.note, idx,
+        // 子音の凹み: エンジンの既定に、手で動かした深さ・広さを重ねる（動かしていない方は既定のまま）。
+        // 手で動かしていない子音は、既定の深さに滑舌の倍率を掛ける（−5 dB で止める。エンジンと同じ）
+        const ov = byId.get(p.note)?.phDip?.[idx];
+        const e = (f + p.frames) / FPS;
+        const defDb = p.dip ? (ov ? p.dip.db : Math.max(DIP_DB_MIN, p.dip.db * artAt((s + e) / 2))) : 0;
+        const seg: PhoneSeg = { ph: p.ph, start: s, end: e, noteId: p.note, idx,
                                 vowel: p.nucleus ?? VOWEL_LIKE.test(p.ph), baseStart: s - applied,
-                                movable: !!prev || pauStart !== null, edited: !!want };
+                                movable: !!prev || pauStart !== null, edited: !!want,
+                                dip: p.dip ? { db: ov?.db ?? defDb, w: ov?.w ?? p.dip.w, edited: !!ov } : undefined };
         if (want !== applied) {
           if (prev) {
             const t = Math.min(seg.end - MIN_PH, Math.max(prev.start + MIN_PH, seg.baseStart + want));

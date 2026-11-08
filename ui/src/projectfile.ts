@@ -5,7 +5,7 @@
 // 形式の版（FORMAT_VERSION）を書いておき、読むときに migrate で今の形に直す。項目を足したら版を上げてここに直し方を書く。
 import { audioEntry, registerAudio } from "./audiofiles";
 import { t } from "./i18n";
-import { isAudioTrack, NOTE_ATTR_KEYS, type NoteAttrs, type Project, trackRegion } from "./model";
+import { defaultBase, isAudioTrack, NOTE_ATTR_KEYS, type NoteAttrs, type Project, trackRegion } from "./model";
 
 export const FORMAT = "svs-editor-project";
 export const FORMAT_VERSION = 1;
@@ -48,6 +48,8 @@ export function migrate(text: string): Project {
       n.attrs = kept as unknown as NoteAttrs;
     }
     t.params ??= {};
+    // 声の設定: 後から足した項目（滑舌など）が無い古いファイルは既定値で埋める
+    t.base = { ...defaultBase(), ...(t.base ?? {}) };
     t.mute = !!t.mute;
     t.solo = !!t.solo;
     if (!t.region) t.region = trackRegion(t, p.beatsPerBar);

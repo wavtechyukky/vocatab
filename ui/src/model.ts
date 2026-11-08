@@ -22,6 +22,9 @@ export interface Note {
   attrs: NoteAttrs;
   /** 手で動かした音素の頭（この音符の中の音素の番号 → 既定の位置からのずれ、秒）。句の頭は動かせない */
   phShift?: Record<number, number>;
+  /** 手で動かした子音の凹み（この音符の中の音素の番号 → 深さ dB・広さ。広さは子音の長さに対する割合で、谷は子音の頭から）。
+   *  無い項目はボイスバンクの既定のまま */
+  phDip?: Record<number, { db?: number; w?: number }>;
   /** この音符の前に入れたブレス（ボイスバンクのブレスの束の中の番号）。無ければ入れていない（breath.ts） */
   breath?: { index: number };
 }
@@ -36,11 +39,12 @@ export interface VoiceBase {
   consonant: number; // 子音の強さ −1〜1
   resonance: number; // 響き −1〜1
   growl: number; // うなり 0〜1
+  articulation: number; // 滑舌: 子音の凹みの既定の深さの倍率 0〜2（既定 1。手で動かした凹みには掛けない）
 }
 
 export type ParamKey =
   "pitchDelta" | "intonationEnv" | "vibratoEnv" | "loudness" | "tension" | "breathiness" | "gender" | "voicing" | "consonant" |
-  "resonance" | "growl";
+  "resonance" | "growl" | "articulation";
 export type Interp = "linear" | "cosine" | "cubic";
 
 /** フレームごとのパラメータの曲線。点は [刻み, 値] を刻みの順に並べる。点の外側は既定値。 */
@@ -145,7 +149,7 @@ export function activeNotes(t: Track, beatsPerBar: number): Note[] {
 
 export function defaultBase(): VoiceBase {
   return { loudness: 0, tension: 0, breathiness: 0, gender: 0, voicing: 1, consonant: 0, resonance: 0,
-           growl: 0 };
+           growl: 0, articulation: 1 };
 }
 
 export interface Project {

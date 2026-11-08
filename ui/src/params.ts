@@ -40,11 +40,17 @@ export const PARAMS: ParamDef[] = [
     top: t("響く"), bottom: t("こもる"), voiceParam: true, fmt: (v) => v.toFixed(2) },
   { key: "growl", label: t("うなり"), min: 0, max: 1, def: 0, viewMin: 0, viewMax: 1,
     top: t("強い"), bottom: t("なし"), voiceParam: false, fmt: (v) => v.toFixed(2) },
+  // 滑舌: 子音の凹み（音素パネルの谷）の既定の深さに掛ける倍率。手で動かした凹みには掛けない。音響モデルの前で効く
+  { key: "articulation", label: t("滑舌"), min: 0, max: 2, def: 1, viewMin: 0, viewMax: 2,
+    top: "× 2", bottom: "× 0", voiceParam: false, fmt: (v) => `× ${v.toFixed(2)}` },
 ];
 
 /** エンジンへ渡すボイスパラメータ（ピッチのずれとビブラートの強さは F0 の組み立てで使うので除く）。 */
 export const VOICE_KEYS: ParamKey[] = ["tension", "breathiness", "gender", "voicing", "loudness",
-                                       "consonant", "resonance", "growl"];
+                                       "consonant", "resonance", "growl", "articulation"];
+
+/** トラック全体の値と曲線を掛け合わせるパラメータ（ほかは足し合わせる）。どちらも既定値は 1 */
+export const MULTIPLY_KEYS: ReadonlySet<ParamKey> = new Set<ParamKey>(["voicing", "articulation"]);
 
 export const paramDef = (key: ParamKey): ParamDef => PARAMS.find((p) => p.key === key)!;
 

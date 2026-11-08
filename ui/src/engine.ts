@@ -2,7 +2,7 @@
 import type { SingerInfo } from "./engine-web/types";
 import { getLang } from "./i18n";
 import { FPS, type Project, secPerTick, type Track } from "./model";
-import { evalCurve, paramDef, VOICE_KEYS } from "./params";
+import { evalCurve, MULTIPLY_KEYS, paramDef, VOICE_KEYS } from "./params";
 
 export interface EngineInfo {
   voicebanks: Array<{ key: string; name: string; language: string; singers: SingerInfo[]; default_vocoder: string }>;
@@ -22,6 +22,8 @@ export interface EPhoneme {
   note: number | null; // 画面の音符の id（pau は null）
   shift?: number; // エンジンが当てた、手で動かした頭のずれ（秒）
   nucleus?: boolean; // 音節の核（母音など。言語パックの nucleus）か。古いエンジンには無い
+  /** 子音の既定の凹み（深さ dB・広さ = 子音の長さに対する割合。谷は子音の頭から）。凹みを掛けないボイスバンク・母音には無い */
+  dip?: { db: number; w: number };
 }
 
 export type PhraseStatus = "解析済み" | "合成中" | "済み" | "失敗";
@@ -63,7 +65,7 @@ export function phraseParams(ph: EPhrase, track: Track, project: Project): Recor
     let neutral = true;
     for (let i = 0; i < ph.nFrames; i++) {
       const cv = evalCurve(curve, (ph.startFrame + i) / FPS / spt, d.def);
-      const v = Math.min(d.max, Math.max(d.min, key === "voicing" ? base * cv : base + cv));
+      const v = Math.min(d.max, Math.max(d.min, MULTIPLY_KEYS.has(key) ? base * cv : base + cv));
       a[i] = v;
       if (v !== d.def) neutral = false;
     }

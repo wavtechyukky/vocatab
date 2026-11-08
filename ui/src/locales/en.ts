@@ -222,6 +222,7 @@ export const en: Record<string, string> = {
   "響く": "Ringing",
   "こもる": "Muffled",
   "うなり": "Growl",
+  "滑舌": "Articulation",
   "なし": "None",
   "表示/非表示": "Show/hide",
   "クリックで前面に表示（編集できるのは最前面の曲線）": "Click: bring to front (you draw on the front curve)",
