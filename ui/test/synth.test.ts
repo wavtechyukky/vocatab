@@ -1,10 +1,12 @@
-// 合成のホスト側（synthhost・voiceparams・melspec）を Python の正解と照らし合わせる。
+// 合成のホスト側（synthhost・voiceparams・melspec・x0shape）を Python の正解と照らし合わせる。
 // モデルの出力（音響モデルの mel・ボコーダの出力）と雑音は正解のものを入れ、ホスト側の計算だけを比べる。
-import { acousticFeeds, finishSynth, melPostprocess, nhvFeeds, nsfFeeds, roundFloat16 } from "../src/engine-web/synthhost";
+import { acousticFeeds, finishSynth, melPostprocess, nhvFeeds, nsfFeeds, phraseDips, roundFloat16,
+         x0Curves } from "../src/engine-web/synthhost";
 import * as VP from "../src/engine-web/voiceparams";
+import * as X0 from "../src/engine-web/x0shape";
 import { wavToMel } from "../src/engine-web/melspec";
 import type { Feed, VoicebankWeb } from "../src/engine-web/types";
-import { CASES, close, done, loadCase, same, vbFor } from "./golden";
+import { cases, close, done, loadCase, same, vbFor } from "./golden";
 
 const num = (f: Feed): number[] => Array.from(f.data as ArrayLike<number | bigint>, (x) => Number(x));
 const ms = (t0: number): string => `${(performance.now() - t0).toFixed(0)} ms`;
@@ -36,24 +38,35 @@ const ms = (t0: number): string => `${(performance.now() - t0).toFixed(0)} ms`;
   close("finish の音量（作り物、2 フレーム）", w2.filter((_, i) => i % 37 === 0), want2, 0);
 }
 
-for (const name of CASES) {
+for (const name of cases()) {
   const vb = vbFor(name) as VoicebankWeb;
   const c = loadCase(name);
   c.phrases.forEach((ph: any, pi: number) => {
     const r = ph.result;
+    // 子音ごとの既定の凹み（解析で作る）
+    const dips = phraseDips(vb, r.phonemes, r.ph_durs);
+    same(`${name} 句${pi} 既定の凹み（dips）`, dips, r.dips ?? null);
     for (const s of ph.synth) {
       const tag = `${name} 句${pi} ${s.kind}`;
       console.log(`\n── ${tag}`);
       const T = Array.from(r.ph_durs as Int32Array).reduce((a, b) => a + b, 0);
+      const gf = s.ac_run.feeds;
+      // 子音の凹み: 手で動かした凹み（句の中の音符の番号ごと）と滑舌の倍率 → x0_loggain
+      const ov = X0.dipOverrides(dips, r.note_index, s.ph_dips ?? {});
+      const sc = X0.dipScales(dips, r.ph_durs, s.params.articulation ?? Float32Array.of(VP.NEUTRAL.articulation), ov);
+      const x0 = x0Curves(vb, { phonemes: r.phonemes, phDurs: r.ph_durs, dips }, ov, sc, T, "x0_loggain" in gf);
       // ⑤ 音響モデルへの入力
       const ac = acousticFeeds(vb, { phonemes: r.phonemes, phDurs: r.ph_durs, uv: r.uv, noteIndex: r.note_index },
-        s.f0_hz, c.input.singer, s.ac_run.feeds.exc_noise ?? null);
-      const gf = s.ac_run.feeds;
+        s.f0_hz, c.input.singer, gf.exc_noise ?? null, x0.feed);
       same(`${tag} tokens`, num(ac.feeds.tokens), Array.from(gf.tokens));
       same(`${tag} durations`, num(ac.feeds.durations), Array.from(gf.durations));
       same(`${tag} 入力の形`, Object.fromEntries(Object.entries(ac.feeds).map(([k, f]) => [k, f.dims])),
         { tokens: [1, r.phonemes.length], durations: [1, r.phonemes.length], f0: [1, T], spk_embed: [1, 256],
-          ...(gf.exc_noise ? { exc_noise: [1, T * 256] } : {}) });
+          ...(gf.exc_noise ? { exc_noise: [1, T * 256] } : {}), ...(gf.x0_loggain ? { x0_loggain: [1, T] } : {}) });
+      if (gf.x0_loggain) {
+        const g = ac.feeds.x0_loggain.data as Float32Array;
+        close(`${tag} x0_loggain（凹み ${g.filter((x) => x < 0).length} フレーム）`, g, gf.x0_loggain, 0);
+      }
       close(`${tag} f0`, ac.feeds.f0.data as Float32Array, gf.f0, 0);
       close(`${tag} spk_embed`, ac.feeds.spk_embed.data as Float32Array, gf.spk_embed, 0);
       close(`${tag} uv_hard`, ac.uvHard, s.result.uv_hard, 0);

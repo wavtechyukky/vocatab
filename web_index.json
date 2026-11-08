@@ -34,7 +34,7 @@
    "credits": "歌声データ: おにく・夏目悠李・波音リツ（各データセットの規約に従う。非商用の研究）。 F0・子音の長さ: PrettyPitch。音響: LeapSinger。",
    "web": "voicebanks/leapsinger_ja_3singer/web.json",
    "bytes": {
-    "acoustic": 54079951,
+    "acoustic": 54080496,
     "f0": 7456868,
     "cons_dur": 117161
    }

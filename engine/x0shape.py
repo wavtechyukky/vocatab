@@ -1,6 +1,7 @@
 """擬似 mel の対数レベル整形（子音の凹み）: 音響 ONNX の `x0_loggain` 入力（フレームごとの ln(gain)、0 = 素のまま）
 に渡す曲線を、音素列と持続長から作る。voicebank.yaml の `x0_shape:` が有効なボイスバンクで、engine/pipeline.py の
 _acoustic が使う（`apply: mel` なら同じ曲線を、擬似 mel ではなく出力の mel に掛ける）。
+ブラウザ版のエンジンは ui/src/engine-web/x0shape.ts（同じ計算。ui/test/x0shape.test.ts で照らし合わせる）。
 
 既定の形は 3 種類:
   - burst: 破裂音・無声破擦音は音素頭で床値に落とし、開放位置で元に戻す（burst_shape: nu なら ν 字の谷）。
@@ -39,14 +40,16 @@ CLASSES = {
     ),
 }
 
-DEFAULTS = dict(burst=True, W=6, floor=0.02, pos_stop=0.30, pos_affr=0.10, closure_max=0,
-                cy_frac=0.55, nasal_exc=True, fric=True, fric_depth=0.85,
-                son=True, son_depth=0.85)
+# 既定値は日本語のボイスバンクで聴いて決めたレシピ（voicebanks/leapsinger_ja_3singer/voicebank.yaml）と同じ。
+# 谷の底の振幅 0.891 は名目 −1 dB（音響モデルの中で広がるので、出力の凹みはもっと深い）。画面で動かせる限界は −5 dB
+DEFAULTS = dict(burst=True, burst_shape="nu", W=6, floor=0.891, pos_stop=0.30, pos_affr=0.10, closure_max=0,
+                cy_frac=0.55, nasal_exc=True, fric=True, fric_depth=0.891,
+                son=True, son_depth=0.891)
 # closure_max: 閉鎖（頭から開放位置まで）の絶対上限（フレーム。0 = 上限なし）。pos_stop などは相対値なので、
 # ゆっくりした曲では子音ラベルと一緒に無音も伸びてスタッカート気味になる。実際の閉鎖はテンポに比例しないため。
-# burst_shape: "nu" で破裂・破擦の形を台形（床つき閉鎖 → 開放で復帰）でなく ν 字の谷にする（深さは floor）。
+# burst_shape: "nu"（既定）で破裂・破擦の形を ν 字の谷にする（深さは floor）。"trap" は台形（床つき閉鎖 → 開放で復帰）。
 #   谷は頭から開放位置（pos_stop / pos_affr・closure_max で決まる r）まで。促音 cl だけは台形のまま
-#   （閉鎖が次の子音まで続くのが正しいので）。既定は台形。
+#   （閉鎖が次の子音まで続くのが正しいので）。
 # per_ph: {音素: {floor / pos_stop / pos_affr / depth / off / shape}} の音素ごとの上書き（省略可）。
 #   off: true でその音素だけ整形しない。depth は ν 字（fric_depth / son_depth）の谷の振幅の上書き。
 #   shape: "nu"/"trap" でその音素だけ形を変える（burst_shape より優先。cl にも効く）。ν の深さは depth、無ければ floor。
@@ -69,12 +72,16 @@ def _pp(p: dict, ph: str) -> dict:
     return dict(p, **o) if o else p
 
 
+# 数値の扱い: 曲線 g は float32 の配列だが、式は float64 で計算し、g に入れる所だけ float32 に丸める。
+# ブラウザ版（ui/src/engine-web/x0shape.ts）が同じ順に double で計算して Float32Array に入れるので、結果が揃う
+# （float32 の cos・log の実装の違いを持ち込まない）。
+
 def _ramp(g: np.ndarray, s: int, e: int, v0: float, v1: float):
     """g[s:e] を v0 → v1 の余弦（raised-cosine）ランプにする（角がない）"""
     n = e - s
     if n <= 0:
         return
-    x = np.linspace(0.0, 1.0, n + 1, dtype=np.float32)[1:]
+    x = np.linspace(0.0, 1.0, n + 1)[1:]
     g[s:e] = v0 + (v1 - v0) * (1.0 - np.cos(np.pi * x)) / 2.0
 
 
@@ -82,7 +89,7 @@ def _hann_dip(g: np.ndarray, s: int, e: int, depth: float):
     """g[s:e] に Hann 窓型（ν 字）の谷を掛ける。谷の底の振幅 = depth"""
     if e - s < MIN_DIP:
         return
-    x = (np.arange(e - s, dtype=np.float32) + 0.5) / (e - s)
+    x = (np.arange(e - s) + 0.5) / (e - s)
     g[s:e] *= 1.0 - (1.0 - float(depth)) * (1.0 - np.cos(2.0 * np.pi * x)) / 2.0
 
 
@@ -245,4 +252,4 @@ def loggain(phonemes, ph_durs, cfg: dict | None, language: str, overrides: dict 
     g = curves[0]
     for x in curves[1:]:
         g = g * x
-    return np.log(np.clip(g, 1e-4, None)).astype(np.float32)
+    return np.log(np.maximum(g.astype(np.float64), 1e-4)).astype(np.float32)

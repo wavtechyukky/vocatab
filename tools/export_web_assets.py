@@ -76,6 +76,12 @@ def main():
                "f0": f0cfg, "cons_dur": cons_cfg, "speakers": spk}
         if vb.breaths and vb.breaths.exists():
             web["breaths"] = rel(vb.breaths)   # ブレスの mel の一覧（breaths.json。bin はその中に書いてある）
+        if isinstance(vb.raw.get("x0_shape"), dict):
+            web["x0_shape"] = vb.raw["x0_shape"]   # 子音の凹みのレシピ（ブラウザ版は engine-web/x0shape.ts が読む）
+        # 音響モデルの入力の名前（ブラウザ版が、モデルを読む前に exc_noise・x0_loggain の有無を知るため）
+        import onnxruntime as ort
+        web["acoustic_inputs"] = [i.name for i in ort.InferenceSession(
+            str(m["acoustic"]), providers=["CPUExecutionProvider"]).get_inputs()]
         path = vb.dir / "web.json"
         path.write_text(json.dumps(web, ensure_ascii=False), encoding="utf-8")
         index["voicebanks"].append({**vb.to_json(), "web": rel(path)})

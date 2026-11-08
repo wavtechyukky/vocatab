@@ -8,10 +8,11 @@ import { wavToMel } from "./melspec";
 import type { AnalyzeReq, AnalyzeResp, BreathIndexResp, BreathReq, BreathResp, RestoreEntry, SynthReq, SynthResp } from "./protocol";
 import { applyRetakes, normalNoise } from "./rng";
 import { phrasesFromNotes } from "./score";
-import { acousticFeeds, finishSynth, fromFloat16Bits, melPostprocess, nhvFeeds, nsfFeeds, phoneSetOf, toFloat16Bits,
-         type VocOut } from "./synthhost";
-import { f32 } from "./types";
+import { acousticFeeds, finishSynth, fromFloat16Bits, melPostprocess, nhvFeeds, nsfFeeds, phoneSetOf, phraseDips, toFloat16Bits,
+         type VocOut, x0Curves } from "./synthhost";
 import type { BreathBank, Feeds, Phrase, VoicebankWeb, VocoderWeb, WebIndex } from "./types";
+import { NEUTRAL } from "./voiceparams";
+import * as X0 from "./x0shape";
 
 const MEL_FLOOR = Math.fround(Math.log(1e-5)); // mel の床（pau・詰め物）
 const N_MELS = 128;
@@ -145,6 +146,8 @@ interface Analysis {
   noteIndex: number[];
   seed: number;
   shifts: number[];
+  /** 子音ごとの既定の凹み（x0shape.dips。凹みを作らないボイスバンクは null） */
+  dips: Array<X0.Dip | null> | null;
 }
 
 /** ⑤⑥ の結果（取り置き） */
@@ -354,9 +357,14 @@ export class Engine {
       out.push({
         key, note_ids: ids, start_frame: roundHalfEven(an.startSec * fr), start_sec: an.startSec,
         n_frames: an.phDurs.reduce((a, b) => a + b, 0),
-        phonemes: an.phonemes.map((p, j) => ({ ph: p, frames: an.phDurs[j], shift: an.shifts[j] ?? 0,
-          note: an.noteIndex[j] >= 0 && ids.length ? ids[Math.min(an.noteIndex[j], ids.length - 1)] : null,
-          nucleus: ps.isNucleus(p) })), // 画面の色分け（母音など）
+        phonemes: an.phonemes.map((p, j) => {
+          const d = an.dips?.[j];
+          return { ph: p, frames: an.phDurs[j], shift: an.shifts[j] ?? 0,
+                   note: an.noteIndex[j] >= 0 && ids.length ? ids[Math.min(an.noteIndex[j], ids.length - 1)] : null,
+                   nucleus: ps.isNucleus(p), // 画面の色分け（母音など）
+                   // 子音の既定の凹み（深さ dB・広さ）。画面が描く（engine/server.py と同じ）
+                   ...(d ? { dip: { db: 20 * Math.log10(Math.max(d.amp, 1e-4)), w: d.w } } : {}) };
+        }),
         plain: an.plainLog2, vib: an.vibLog2, uv: an.uv, base: an.baseLog2, seed: an.seed,
       });
     }
@@ -380,9 +388,10 @@ export class Engine {
     }
     const o = await this.run(await this.session(vb.key, "f0"), f0Feeds(vb, fp, spk, noise), ["plain", "vibrato", "vuv"]);
     const f = finishF0(vb, fp, { plain: o.plain, vibrato: o.vibrato, vuv: o.vuv });
-    return { phonemes: dur.seq.phonemes, phDurs: alignDurs(dur.phDurs, f.T), startSec: dur.startSec,
+    const phDurs = alignDurs(dur.phDurs, f.T);
+    return { phonemes: dur.seq.phonemes, phDurs, startSec: dur.startSec,
              plainLog2: f.plainLog2, vibLog2: f.vibLog2, uv: f.uv, baseLog2: f.baseLog2,
-             noteIndex: dur.noteIndex, seed, shifts: dur.applied };
+             noteIndex: dur.noteIndex, seed, shifts: dur.applied, dips: phraseDips(vb, dur.seq.phonemes, phDurs) };
   }
 
   /**
@@ -394,14 +403,16 @@ export class Engine {
     let n = 0;
     for (const e of entries) {
       if (!this.vbs.has(e.vb) || this.analyses.has(e.key)) continue;
+      const phonemes = e.phonemes.map((p) => p.ph);
+      const phDurs = Int32Array.from(e.phonemes, (p) => p.frames);
       const an: Analysis = {
-        phonemes: e.phonemes.map((p) => p.ph),
-        phDurs: Int32Array.from(e.phonemes, (p) => p.frames),
+        phonemes, phDurs,
         startSec: e.start_sec,
         plainLog2: e.plain, vibLog2: e.vib, uv: e.uv, baseLog2: e.base,
         noteIndex: e.phonemes.map((p) => (p.note === null ? -1 : e.ids.indexOf(p.note))),
         seed: e.seed,
         shifts: e.phonemes.map((p) => p.shift ?? 0),
+        dips: phraseDips(this.vbs.get(e.vb)!, phonemes, phDurs), // 音素と長さから決まるので作り直せる
       };
       this.analyses.put(e.key, { vb: e.vb, an, ids: e.ids.slice() });
       n++;
@@ -426,27 +437,48 @@ export class Engine {
     const pos = new Map(hit.ids.map((nid, i) => [String(nid), i]));
     const rt: Record<number, number> = {};
     for (const [k, s] of Object.entries(r.retake_mel ?? {})) if (pos.has(k) && Number(s)) rt[pos.get(k)!] = Number(s);
+    // 子音の凹み: 画面で動かしたもの（音符の id → 句の中の番号）と、滑舌の倍率
+    const phDips: Record<number, Record<number, { db?: number; w?: number }>> = {};
+    for (const [k, d] of Object.entries(r.ph_dip ?? {})) {
+      if (pos.has(k) && d && Object.keys(d).length) {
+        phDips[pos.get(k)!] = Object.fromEntries(Object.entries(d).map(([i, v]) => [Number(i), v]));
+      }
+    }
+    const ov = X0.dipOverrides(an.dips, an.noteIndex, phDips);
+    const sc = X0.dipScales(an.dips, an.phDurs, r.params.articulation ?? Float32Array.of(NEUTRAL.articulation), ov);
 
-    // ⑤ 音響 → ⑥ mel の後処理（F0・歌い手・取り直しが同じなら使い回す）
-    const acKey = digest(an.seed, r.singer, an.phonemes, an.phDurs, f0Hz.subarray(0, T), rt);
+    // ⑤ 音響 → ⑥ mel の後処理（F0・歌い手・取り直し・凹みが同じなら使い回す）
+    const acKey = digest(an.seed, r.singer, an.phonemes, an.phDurs, f0Hz.subarray(0, T), rt,
+                         [...ov].sort((a, b) => a[0] - b[0]).map(([j, o]) => [j, o.amp, o.w]),
+                         [...sc].sort((a, b) => a[0] - b[0]));
     let ac = this.acCache.get(acKey);
     if (!ac) {
-      let exc = this.noise.exc?.(T) ?? null;
-      if (!exc) {
-        exc = normalNoise(T * 256, an.seed, 1);
-        if (Object.keys(rt).length) {
-          const fn = frameNoteIndex(an.noteIndex, an.phDurs, T);
-          const fs = new Int32Array(T * 256);
-          for (let i = 0; i < fs.length; i++) fs[i] = fn[(i / 256) | 0];
-          applyRetakes(exc, fs, rt, 1);
+      const acSess = await this.session(vb.key, "acoustic");
+      const inputs = acSess.inputNames as string[];
+      let exc: Float32Array | null = null;
+      if (inputs.includes("exc_noise")) { // 励振の雑音も句の種から（入力の無いモデルには渡さない）
+        exc = this.noise.exc?.(T) ?? null;
+        if (!exc) {
+          exc = normalNoise(T * 256, an.seed, 1);
+          if (Object.keys(rt).length) {
+            const fn = frameNoteIndex(an.noteIndex, an.phDurs, T);
+            const fs = new Int32Array(T * 256);
+            for (let i = 0; i < fs.length; i++) fs[i] = fn[(i / 256) | 0];
+            applyRetakes(exc, fs, rt, 1);
+          }
         }
       }
-      const a = acousticFeeds(vb, { phonemes: an.phonemes, phDurs: an.phDurs, uv: an.uv, noteIndex: an.noteIndex }, f0Hz, r.singer, exc);
-      const acSess = await this.session(vb.key, "acoustic");
-      // 子音の凹みの入力（x0_loggain）を持つモデル: ブラウザ版のエンジンはまだ凹みを作らないので、0（凹みなし）を渡す
-      if ((acSess.inputNames as string[]).includes("x0_loggain")) a.feeds.x0_loggain = f32(new Float32Array(T), [1, T]);
+      // 子音の凹み: フレームごとの ln(gain)。既定は擬似 mel に（x0_loggain）、apply: mel なら出力の mel に足す
+      const x0 = x0Curves(vb, an, ov, sc, T, inputs.includes("x0_loggain"));
+      const a = acousticFeeds(vb, { phonemes: an.phonemes, phDurs: an.phDurs, uv: an.uv, noteIndex: an.noteIndex }, f0Hz, r.singer,
+                              exc, x0.feed);
       const mel = (await this.run(acSess, a.feeds, ["mel"])).mel;
-      ac = { melIn: melPostprocess(mel, T, a.uvHard, vb.frame_rate), uvHard: a.uvHard, cons: a.cons, f0: a.f0 };
+      const melIn = melPostprocess(mel, T, a.uvHard, vb.frame_rate);
+      if (x0.mel) {
+        const g = x0.mel;
+        for (let b = 0; b < N_MELS; b++) for (let t = 0; t < T; t++) melIn[b * T + t] = melIn[b * T + t] + g[t];
+      }
+      ac = { melIn, uvHard: a.uvHard, cons: a.cons, f0: a.f0 };
       this.acCache.put(acKey, ac, ac.melIn.byteLength + ac.uvHard.byteLength + ac.cons.byteLength + ac.f0.byteLength, r.key);
     }
     // ⑦ ボコーダ（さらにボコーダが同じなら使い回す）。ボイスパラメータはこの後で掛けるので、動かしても混ぜ直すだけ

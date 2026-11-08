@@ -4,7 +4,7 @@
 // 走らせ方（svs_editor_browser の頭で）:
 //   npx esbuild@0.25.0 ui/test/<名前>.test.ts --bundle --platform=node --format=esm --outfile=<作業用>/t.mjs
 //   node <作業用>/t.mjs
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,12 +12,14 @@ const shapes = new WeakMap<object, number[]>();
 export const shapeOf = (a: object): number[] => shapes.get(a) ?? [];
 
 /**
- * svs_editor_browser の頭のフォルダ。カレントディレクトリが頭でも、その 1 つ上（research）でもよい。
+ * リポジトリの頭のフォルダ。環境変数 REPO_ROOT があればそれ。無ければカレントディレクトリが頭でも、その 1 つ上でもよい。
  * esbuild でまとめると import.meta.url は出力先になるので、カレントディレクトリから探す
  */
 export function repoRoot(): string {
   const cwd = process.cwd();
-  for (const c of [cwd, join(cwd, "svs_editor_browser"), join(cwd, ".."), join(dirname(fileURLToPath(import.meta.url)), "../..")]) {
+  const cands = [process.env.REPO_ROOT, cwd, join(cwd, "svs_editor_browser"), join(cwd, ".."),
+                 join(dirname(fileURLToPath(import.meta.url)), "../..")].filter((c): c is string => !!c);
+  for (const c of cands) {
     try {
       readFileSync(join(c, "web_index.json"));
       return c;
@@ -68,14 +70,26 @@ export function loadCase(name: string): any {
   return resolve(JSON.parse(readFileSync(join(dir, "case.json"), "utf-8")), dir);
 }
 
-export const CASES = ["sakura", "mixed", "params", "korean"];
-
 // ケースごとのボイスバンク（tools/golden/dump_golden.py のケースの "vb"。無ければ日本語）
 const CASE_VB: Record<string, string> = { korean: "leapsinger_ko_mechol_sodasoo" };
+const vbKey = (name: string): string => CASE_VB[name] ?? "leapsinger_ja_3singer";
+
+/** そのケースのボイスバンクが手元にあるか（韓国語のボイスバンクは同梱していない） */
+export const hasVb = (name: string): boolean => existsSync(join(repoRoot(), `voicebanks/${vbKey(name)}/web.json`));
+
+/** 照らし合わせるケース。ボイスバンクが手元に無いケースは、その旨を出して飛ばす */
+export function cases(): string[] {
+  return ["sakura", "mixed", "params", "dips", "korean"].filter((name) => {
+    if (hasVb(name)) return true;
+    console.log(`（${name} は飛ばす: ボイスバンク ${vbKey(name)} が手元に無い）`);
+    return false;
+  });
+}
+
 const vbCache = new Map<string, any>();
 /** そのケースを書き出したボイスバンクの web.json */
 export function vbFor(name: string): any {
-  const key = CASE_VB[name] ?? "leapsinger_ja_3singer";
+  const key = vbKey(name);
   if (!vbCache.has(key)) vbCache.set(key, JSON.parse(readRepo(`voicebanks/${key}/web.json`)));
   return vbCache.get(key);
 }

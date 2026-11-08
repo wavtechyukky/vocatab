@@ -167,12 +167,21 @@ def main():
               (4320, 480, 57, "s a L"), (4800, 480, 59, "좋"), (5520, 480, 57, "다"), (6000, 960, 55, "사랑"),
               (8880, 480, 52, "신"), (9360, 480, 55, "라"), (9840, 720, 57, "닭")]
     korean = [{"id": i + 1, "onset": o, "dur": d, "pitch": p, "lyric": l} for i, (o, d, p, l) in enumerate(ko_lyr)]
+    # 子音の凹み: 破裂（か ぱ た）・有声の摩擦（ざ）・鳴り子音（な りょ ま）・促音（っ）・破擦（ちゃ）・鼻音の後の有声破裂（ん が）・
+    # 無声の摩擦（し）。手で動かした凹みは、深さと広さ・深さだけ・広さだけ・範囲の外（−5 dB と 1 に切る）・浅い側の外（0 dB に切る）・
+    # 既定の凹みの無い所（ん の後の が、母音。効かない）。滑舌は句の中で 0〜2 に動かす
+    dp_lyr = ["か", "ざ", "な", "っ", "ぱ", "ちゃ", "りょ", "ん", "が", "た", "ま", "し"]
+    dp_pit = [67, 69, 71, 72, 72, 74, 72, 71, 69, 67, 69, 67]
+    dips = [{"id": i + 1, "onset": 360 * i, "dur": 360, "pitch": p, "lyric": l} for i, (l, p) in enumerate(zip(dp_lyr, dp_pit))]
     cases = [
         {"name": "sakura", "bpm": 100, "notes": sakura, "singer": 0, "seed": 0},
         {"name": "mixed", "bpm": 120, "notes": mixed, "singer": 1, "seed": 7,
          "retake_f0": {3: 123456789}, "retake_mel": {5: 987654321},
          "ph_shift": {1: {0: -0.08}, 3: {1: 0.02}, 7: {0: -0.2}, 9: {1: -0.03}}},
         {"name": "params", "bpm": 100, "notes": sakura[:6], "singer": 2, "seed": 3, "params": True, "nsf": True},
+        {"name": "dips", "bpm": 110, "notes": dips, "singer": 1, "seed": 11, "articulation": True,
+         "ph_dip": {1: {0: {"db": -4.0, "w": 0.8}}, 3: {0: {"db": -2.5}}, 5: {0: {"w": 0.3}}, 7: {0: {"db": -6.0, "w": 1.5}},
+                    9: {0: {"db": -3.0}}, 10: {0: {"db": 0.5}}, 2: {1: {"db": -3.0}}}},
         {"name": "korean", "vb": "leapsinger_ko_mechol_sodasoo", "bpm": 120, "notes": korean, "singer": 0, "seed": 5,
          "ph_shift": {3: {0: -0.05}}},
     ]
@@ -182,6 +191,9 @@ def main():
         if only and c["name"] not in only:
             continue
         key = c.get("vb", vb.key)
+        if key not in vbs:   # 同梱していないボイスバンク（韓国語など）のケースは飛ばす
+            print(f"{c['name']} は飛ばす: ボイスバンク {key} が手元に無い")
+            continue
         if key not in engines:
             engines[key] = wrap_sessions(P.PrettyPitchLeapSinger(vbs[key]))
         eng = engines[key]
@@ -193,6 +205,7 @@ def main():
             f0_rt = {i: c.get("retake_f0", {}).get(nid, 0) for i, nid in enumerate(ids) if c.get("retake_f0", {}).get(nid, 0)}
             sh = {i: c["ph_shift"][nid] for i, nid in enumerate(ids) if c.get("ph_shift", {}).get(nid)}
             mel_rt = {i: c.get("retake_mel", {}).get(nid, 0) for i, nid in enumerate(ids) if c.get("retake_mel", {}).get(nid, 0)}
+            dip = {i: c["ph_dip"][nid] for i, nid in enumerate(ids) if c.get("ph_dip", {}).get(nid)}
             rec.clear()
             an = eng.analyze(ph, c["singer"], c["seed"], f0_retakes=f0_rt, ph_shifts=sh)
             ana = {"phrase": snap(ph), "ids": ids, "f0_retakes": f0_rt, "ph_shifts": sh, **{k: v for k, v in rec.items()}, "result": an}
@@ -210,15 +223,19 @@ def main():
                           "resonance": (0.5 * np.cos(2 * np.pi * t)).astype(np.float32),
                           "growl": (0.6 * t).astype(np.float32),
                           "loudness": (-6 + 6 * t).astype(np.float32)}
+            if c.get("articulation"):   # 滑舌: 0（既定の凹み無し）〜 2（2 倍）を行き来する
+                t = np.linspace(0, 1, T, dtype=np.float32)
+                params["articulation"] = (1.0 + np.sin(2 * np.pi * 1.5 * t)).astype(np.float32)
             syn = []
             for voc in [nhv] + ([nsf] if c.get("nsf") and nsf else []):
                 rec.clear()
                 eng._ac_cache = P._LRU(64)
                 eng._voc_cache = P._LRU(48)
-                r = eng.synthesize(an, f0_hz, c["singer"], voc, params=params, want_plain=True, mel_retakes=mel_rt)
+                r = eng.synthesize(an, f0_hz, c["singer"], voc, params=params, want_plain=True, mel_retakes=mel_rt,
+                                   ph_dips=dip)
                 syn.append({"vocoder": voc.key, "kind": voc.kind, "gain_db": voc.gain_db, "voice_params": voc.voice_params,
-                            "f0_hz": f0_hz, "params": params, "mel_retakes": mel_rt, **{k: v for k, v in rec.items()},
-                            "result": r, "mel_out": wav_to_mel(r["wav"])})
+                            "f0_hz": f0_hz, "params": params, "mel_retakes": mel_rt, "ph_dips": dip,
+                            **{k: v for k, v in rec.items()}, "result": r, "mel_out": wav_to_mel(r["wav"])})
             ana["synth"] = syn
             res["phrases"].append(sv.conv(ana, f"p{pi}"))
             print(f"{c['name']} 句 {pi}: {T} フレーム、音素 {len(an.phonemes)}")

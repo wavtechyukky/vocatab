@@ -2,7 +2,7 @@
 // モデルの出力と雑音は正解のものを使うので、ここで比べるのはホストの計算だけ。
 import { f0Feeds, finishF0, frameNoteIndex, prepareF0 } from "../src/engine-web/f0host";
 import type { PhonemeSequence, VoicebankWeb } from "../src/engine-web/types";
-import { CASES, close, done, loadCase, same, shapeOf, vbFor } from "./golden";
+import { cases, close, done, loadCase, same, shapeOf, vbFor } from "./golden";
 
 /** NaN の位置も含めて比べる（NaN 同士は一致とみなす） */
 function closeNaN(label: string, got: ArrayLike<number>, want: ArrayLike<number>, atol = 0): void {
@@ -13,7 +13,7 @@ function closeNaN(label: string, got: ArrayLike<number>, want: ArrayLike<number>
 
 const big = (a: BigInt64Array | Float32Array) => Array.from(a as ArrayLike<number | bigint>, (x) => Number(x));
 
-for (const name of CASES) {
+for (const name of cases()) {
   const vb = vbFor(name) as VoicebankWeb;
   const c = loadCase(name);
   const spk = Number(c.input.singer);

@@ -1,5 +1,6 @@
 // 合成のホスト側の処理（engine/pipeline.py の PrettyPitchLeapSinger.synthesize・_acoustic・_vocode と、
 // PrettyPitch の svs/render.py の mel_postprocess）。音響モデルとボコーダ（ONNX）の前後だけを受け持つ純粋な関数。
+//   phraseDips・x0Curves  子音の凹み（analyze の dips、_acoustic の x0_loggain と apply: mel の曲線）
 //   acousticFeeds   ⑤ 音響モデルへの入力（synthesize の前半 + _acoustic のモデルの前）
 //   melPostprocess  ⑥ mel の後処理（mel[0].T → R.mel_postprocess）
 //   nhvFeeds・nsfFeeds  ⑦ ボコーダへの入力（_vocode の種類ごとの形の違い）
@@ -8,6 +9,7 @@ import { PhoneSet } from "./phoneset";
 import { f32, i64 } from "./types";
 import type { Feeds, VoicebankWeb } from "./types";
 import * as VP from "./voiceparams";
+import * as X0 from "./x0shape";
 
 const PAU = "pau";
 const HOP = 256;
@@ -21,12 +23,49 @@ export const phoneSetOf = (vb: VoicebankWeb): PhoneSet => {
   return ps;
 };
 
+// ── 子音の凹み（engine/pipeline.py の x0_cfg・x0_mel・x0_on と、engine/x0shape.py） ──
+
+/** x0_shape が apply: mel か（同じ曲線を、擬似 mel ではなく出力の mel に足す） */
+const x0Mel = (vb: VoicebankWeb): boolean => {
+  const cfg = vb.x0_shape;
+  return !!cfg && typeof cfg === "object" && Object.keys(cfg).length > 0 && String(cfg.apply ?? "") === "mel";
+};
+
+/** 凹みを作るか（engine/pipeline.py の x0_on）。音響モデルの入力は web.json の acoustic_inputs で見る */
+export function x0On(vb: VoicebankWeb): boolean {
+  const cfg = vb.x0_shape;
+  if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) return false;
+  const hasInput = vb.acoustic_inputs ? vb.acoustic_inputs.includes("x0_loggain") : true;
+  return (x0Mel(vb) || hasInput) && X0.paramsOf(cfg) !== null && X0.classesOf(vb.language) !== null;
+}
+
+/** 子音ごとの既定の凹み（engine/pipeline.py の analyze の dips）。凹みを作らないボイスバンクは null */
+export function phraseDips(vb: VoicebankWeb, phonemes: string[], phDurs: ArrayLike<number>): Array<X0.Dip | null> | null {
+  if (!x0On(vb)) return null;
+  const ps = phoneSetOf(vb);
+  return X0.dips(phonemes, phDurs, vb.x0_shape!, vb.language, (p) => p !== PAU && !ps.isNucleus(p));
+}
+
+/**
+ * _acoustic の凹みの曲線: feed は音響モデルの x0_loggain に入れる [T]（モデルにその入力が無ければ null。
+ * apply: mel のときは 0 の並び）、mel は出力の mel に足す [T]（apply: mel のときだけ）。
+ * ov・sc は x0shape.dipOverrides・dipScales の結果
+ */
+export function x0Curves(vb: VoicebankWeb, an: { phonemes: string[]; phDurs: ArrayLike<number>; dips: Array<X0.Dip | null> | null },
+                         ov: Map<number, X0.Dip>, sc: Map<number, number>, T: number, hasInput: boolean):
+  { feed: Float32Array | null; mel: Float32Array | null } {
+  const mel = x0Mel(vb);
+  const g = an.dips ? X0.loggain(an.phonemes, an.phDurs, vb.x0_shape!, vb.language, ov, sc) : null;
+  return { feed: hasInput ? (g && !mel ? g.slice(0, T) : new Float32Array(T)) : null, mel: mel && g ? g.slice(0, T) : null };
+}
+
 /** synthesize の前半と _acoustic のモデルの前: 音響モデルへの入力、T に詰めた F0、無声・有声（uv_hard）、子音のフレーム。
- * excNoise は励振の雑音 [T·256]（リテイクを当てた後のもの。モデルが exc_noise を持たなければ null） */
+ * excNoise は励振の雑音 [T·256]（リテイクを当てた後のもの。モデルが exc_noise を持たなければ null）、
+ * x0 は子音の凹み [T]（x0Curves の feed。モデルが x0_loggain を持たなければ null） */
 export function acousticFeeds(
   vb: VoicebankWeb,
   an: { phonemes: string[]; phDurs: ArrayLike<number>; uv: ArrayLike<number>; noteIndex: number[] },
-  f0Hz: Float32Array, spk: number, excNoise: Float32Array | null,
+  f0Hz: Float32Array, spk: number, excNoise: Float32Array | null, x0: Float32Array | null = null,
 ): { feeds: Feeds; f0: Float32Array; uvHard: Float32Array; cons: Uint8Array; T: number } {
   const N = an.phonemes.length;
   let T = 0;
@@ -67,6 +106,7 @@ export function acousticFeeds(
     spk_embed: f32(Float32Array.from(emb), [1, emb.length]),
   };
   if (excNoise) feeds.exc_noise = f32(excNoise, [1, excNoise.length]);
+  if (x0) feeds.x0_loggain = f32(x0, [1, x0.length]);
   return { feeds, f0, uvHard, cons, T };
 }
 

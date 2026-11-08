@@ -45,6 +45,10 @@ export interface VoicebankWeb {
   speakers: { phonemes: string[]; speakers: Record<string, number[]> };
   /** ブレスの mel の一覧（breaths.json）の場所。無いボイスバンクはブレスを入れられない */
   breaths?: string;
+  /** 子音の凹みのレシピ（voicebank.yaml の x0_shape。engine/x0shape.py・x0shape.ts）。無ければ凹みを作らない */
+  x0_shape?: Record<string, any>;
+  /** 音響モデルの入力の名前（exc_noise・x0_loggain を持つかを、モデルを読む前に知るため） */
+  acoustic_inputs?: string[];
 }
 
 /** voicebanks/<名前>/breaths.json（tools/breaths/build_breath_bank.py が書く）。mel は float16 の bin に [128, frames] 行優先で並ぶ */

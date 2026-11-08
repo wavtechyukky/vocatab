@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { lyricSyllables, syllablesToPhonemes } from "../src/engine-web/g2p_ko";
 import type { VoicebankWeb } from "../src/engine-web/types";
-import { done, repoRoot, same, vbFor } from "./golden";
+import { done, hasVb, repoRoot, same, vbFor } from "./golden";
 
 const g2p = (word: string): string => syllablesToPhonemes(Array.from(word)).map((p) => p.join(" ")).join(" | ");
 
@@ -35,10 +35,14 @@ for (const c of cases) {
 }
 same(`Python と同じ（${cases.length} 並び）: 外れの数`, bad, 0);
 
-// 出てくる音素はすべて韓国語の音素表にある
-const vb = vbFor("korean") as VoicebankWeb;
-const known = new Set(vb.phoneset.phonemes);
-const unknown = new Set<string>();
-for (const c of cases) for (const p of syllablesToPhonemes(c.in).flat()) if (!known.has(p)) unknown.add(p);
-same("音素表に無い音素", [...unknown], []);
+// 出てくる音素はすべて韓国語の音素表にある（韓国語のボイスバンクが手元にあるときだけ）
+if (hasVb("korean")) {
+  const vb = vbFor("korean") as VoicebankWeb;
+  const known = new Set(vb.phoneset.phonemes);
+  const unknown = new Set<string>();
+  for (const c of cases) for (const p of syllablesToPhonemes(c.in).flat()) if (!known.has(p)) unknown.add(p);
+  same("音素表に無い音素", [...unknown], []);
+} else {
+  console.log("（音素表の確かめは飛ばす: 韓国語のボイスバンクが手元に無い）");
+}
 done();

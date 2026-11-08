@@ -42,7 +42,7 @@ export interface SynthReq {
   mel_out: boolean;
   mel_plain: boolean;
   retake_mel: Record<string, number>;
-  /** 動かした子音の凹み: 音符の id → {音符の中の音素の番号: 深さ dB・広さ}（ブラウザ版のエンジンはまだ使わない） */
+  /** 動かした子音の凹み: 音符の id → {音符の中の音素の番号: 深さ（名目 dB）・広さ}（engine/pipeline.py の dip_overrides） */
   ph_dip?: Record<string, Record<string, { db?: number; w?: number }>>;
 }
 

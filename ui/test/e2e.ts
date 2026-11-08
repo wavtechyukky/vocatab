@@ -110,7 +110,8 @@ async function runCase(name: string): Promise<void> {
       for (const [id, v] of Object.entries(inp.retake_mel ?? {})) retakeMel[id] = Number(v);
       const t1 = performance.now();
       const r = await eng.synthesize({ voicebank: vbKey, singer: inp.singer, key: g.key, f0_log2: log2, vocoder: s.vocoder,
-                                       params: s.params ?? {}, mel_out: true, mel_plain: true, retake_mel: retakeMel });
+                                       params: s.params ?? {}, mel_out: true, mel_plain: true, retake_mel: retakeMel,
+                                       ph_dip: inp.ph_dip ?? {} });
       log(`合成（${s.vocoder}）${(performance.now() - t1).toFixed(0)} ms`);
       // 音響モデルの出力は、onnxruntime-web と手元の onnxruntime の計算の違いで、最大 0.09・平均 0.0012（ln）ほどずれる
       // （同じ入力をモデルだけに入れても同じ差になる。?model_only= で確かめられる）。前後の処理の誤りは
@@ -132,7 +133,8 @@ async function modelOnly(name: string): Promise<void> {
   const sess = await ort.InferenceSession.create(`${BASE}voicebanks/leapsinger_ja_3singer/acoustic.onnx`,
                                                  { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
   const feeds: Record<string, any> = {};
-  const shapes: Record<string, number[]> = { tokens: [1, -1], durations: [1, -1], f0: [1, -1], spk_embed: [1, 256], exc_noise: [1, -1] };
+  const shapes: Record<string, number[]> = { tokens: [1, -1], durations: [1, -1], f0: [1, -1], spk_embed: [1, 256], exc_noise: [1, -1],
+                                             x0_loggain: [1, -1] };
   for (const [k, v] of Object.entries(s.ac_run.feeds as Record<string, any>)) {
     const dims = shapes[k].map((d) => (d === -1 ? (v as ArrayLike<number>).length : d));
     feeds[k] = v instanceof Int32Array ? new ort.Tensor("int64", BigInt64Array.from(Array.from(v, (x) => BigInt(x))), dims)
@@ -161,7 +163,7 @@ async function modelOnly(name: string): Promise<void> {
   ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/";
   ort.env.wasm.numThreads = 1;
   try {
-    for (const name of (q.get("cases") ?? "sakura,mixed,params").split(",")) await runCase(name);
+    for (const name of (q.get("cases") ?? "sakura,mixed,params,dips").split(",")) await runCase(name);
     log(failures ? `\n外れ ${failures} 件` : "\nすべて一致");
   } catch (e) {
     failures++;

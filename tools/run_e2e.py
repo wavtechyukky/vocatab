@@ -1,7 +1,7 @@
 """全体の照らし合わせ（ui/test/e2e.ts）をヘッドレスの Chrome で走らせ、結果を出す。
 
 ui/test/e2e.ts を esbuild で ui/test/e2e.js にまとめ、リポジトリの頭を http で配り、e2e.html を開く。
-使い方: python tools/run_e2e.py [--cases sakura,mixed,params]
+使い方: python tools/run_e2e.py [--cases sakura,mixed,params,dips]
 """
 import argparse
 import asyncio
@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--cases", default="sakura,mixed,params")
+ap.add_argument("--cases", default="sakura,mixed,params,dips")
 ap.add_argument("--port", type=int, default=8099)
 ap.add_argument("--model-only", default="", help="音響モデルだけを同じ入力で動かして比べる楽譜の名前")
 args = ap.parse_args()
