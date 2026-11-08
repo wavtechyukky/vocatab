@@ -194,7 +194,8 @@ def main():
         {"name": "params", "bpm": 100, "notes": sakura[:6], "singer": 2, "seed": 3, "params": True, "nsf": True},
         {"name": "dips", "bpm": 110, "notes": dips, "singer": 1, "seed": 11, "articulation": True,
          "ph_dip": {1: {0: {"db": -4.0, "w": 0.8}}, 3: {0: {"db": -2.5}}, 5: {0: {"w": 0.3}}, 7: {0: {"db": -6.0, "w": 1.5}},
-                    9: {0: {"db": -3.0}}, 10: {0: {"db": 0.5}}, 2: {1: {"db": -3.0}}}},
+                    9: {0: {"db": -3.0}}, 10: {0: {"db": 0.5}}, 2: {1: {"db": -3.0}},
+                    4: {0: {"db": -4.5}}, 11: {0: {"db": -2.0, "w": 0.5}}}},   # っ は台形のまま（閉鎖）、ま は ν
     ]
     if os.environ.get("GOLDEN_KO_VB"):
         cases.append({"name": "korean", "vb": os.environ["GOLDEN_KO_VB"], "bpm": 120, "notes": korean, "singer": 0, "seed": 5,

@@ -16,8 +16,9 @@ export interface PhoneSeg {
   baseStart: number; // 手で動かす前の頭
   movable: boolean; // 頭を動かせるか（pau の頭 = 句の最後の音素の終わりは動かせない）
   edited: boolean;
-  /** 子音の凹み（エンジンが凹みを返すボイスバンクの子音だけ）: 今の深さ dB・広さ（子音の長さに対する割合）、手で動かしたか */
-  dip?: { db: number; w: number; edited: boolean };
+  /** 子音の凹み（エンジンが凹みを返すボイスバンクの子音だけ）: 今の深さ dB・広さ（子音の長さに対する割合）、手で動かしたか。
+   * 台形（cl の閉鎖など）は ramp（ランプの幅。秒）と hold（最後まで凹ませたら戻さない）。手で動かしても形は変わらない */
+  dip?: { db: number; w: number; edited: boolean; ramp?: number; hold?: boolean };
 }
 
 const MIN_PH = 0.012; // 音素の最短（秒）
@@ -91,7 +92,8 @@ function fromEngine(project: Project, track: Track, phrases: EPhrase[], notes: N
         const seg: PhoneSeg = { ph: p.ph, start: s, end: e, noteId: p.note, idx,
                                 vowel: p.nucleus ?? VOWEL_LIKE.test(p.ph), baseStart: s - applied,
                                 movable: !!prev || pauStart !== null, edited: !!want,
-                                dip: p.dip ? { db: ov?.db ?? defDb, w: ov?.w ?? p.dip.w, edited: !!ov } : undefined };
+                                dip: p.dip ? { db: ov?.db ?? defDb, w: ov?.w ?? p.dip.w, edited: !!ov,
+                                               ramp: p.dip.ramp, hold: p.dip.hold } : undefined };
         if (want !== applied) {
           if (prev) {
             // エンジンは、まとめた母音の最後の 1 つ（音符の頭から）より前へは動かさない

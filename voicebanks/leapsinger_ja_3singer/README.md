@@ -17,6 +17,20 @@
 | `web.json` | ブラウザ版のエンジンが読む設定（`tools/export_web_assets.py` が `voicebank.yaml` から作る） |
 | `夏目悠李_利用規約.txt` | 夏目悠李の出力音声に関する利用規約（同梱が条件） |
 
+## 音響モデルの書き出し方
+
+`acoustic.onnx` と `speakers.json` は、LeapSinger v2.0.0 の重み（Release の `3singer_v2_student.pt`）を、LeapSinger の書き出しで作ったものです（LeapSinger のフォルダで）:
+
+    python -m export.cli \
+      --ckpt 3singer_v2_student.pt \
+      --out export/acoustic --model-name acoustic \
+      --variant diffsinger --hop 256 --speaker embed --exc-noise --x0-gain --verify
+
+書き出された ONNX と `acoustic.speakers.json` を、`acoustic.onnx`・`speakers.json` としてこのフォルダに置きます。
+
+- `--exc-noise`: 励起の雑音を入力 `exc_noise` にします。エンジンが句ごとに種を決めて渡すので、同じ句は毎回同じ音になり、AI リテイクでは一部の区間だけ歌い直せます。
+- `--x0-gain`: 子音の凹みの入力 `x0_loggain` を足します（0 なら凹みの無い音と同じ）。凹みの形は `voicebank.yaml` の `x0_shape` で決めます。
+
 ## 利用条件
 
 このフォルダのモデルと素材は、上の 3 つの歌声データベースから作った派生物で、各データベースの利用規約に従います。

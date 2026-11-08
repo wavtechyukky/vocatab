@@ -22,8 +22,9 @@ export interface EPhoneme {
   note: number | null; // 画面の音符の id（pau は null）
   shift?: number; // エンジンが当てた、手で動かした頭のずれ（秒）
   nucleus?: boolean; // 音節の核（母音など。言語パックの nucleus）か。古いエンジンには無い
-  /** 子音の既定の凹み（深さ dB・広さ = 子音の長さに対する割合。谷は子音の頭から）。凹みを掛けないボイスバンク・母音には無い */
-  dip?: { db: number; w: number };
+  /** 子音の既定の凹み（深さ dB・広さ = 子音の長さに対する割合。谷は子音の頭から）。凹みを掛けないボイスバンク・母音には無い。
+   * 台形（cl の閉鎖など）は ramp（落とす・戻すランプの幅。秒）があり、cl は hold（最後まで凹ませたら戻さない） */
+  dip?: { db: number; w: number; ramp?: number; hold?: boolean };
   /** 伸ばしの音符で前の母音がそのまま続き、音響モデルには前の音素とまとめて渡す母音（acoustic_merge_melisma のボイスバンクだけ）。
    * 画面は前の音素の続きとして描き、頭は動かせない */
   held?: boolean;

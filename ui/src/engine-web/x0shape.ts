@@ -43,7 +43,8 @@ export const DEFAULTS: Record<string, any> = {
 export const MIN_DIP = 3; // ν 字の谷の最短のフレーム数
 export const DIP_DB_MIN = -5.0; // 画面で動かせる凹みの深さの限界（名目 dB。engine/pipeline.py の DIP_DB_MIN）
 
-export type Dip = { amp: number; w: number };
+/** 子音の谷: 底の振幅・広さ（音素の長さに対する割合）。台形なら ramp（落とす・戻すランプの幅。フレーム）、cl の閉鎖は hold */
+export type Dip = { amp: number; w: number; ramp?: number; hold?: boolean };
 type Seg = [string, number, number]; // 音素・頭のフレーム・終わりのフレーム
 type BurstPlan = Map<number, [string, number, number, number]>; // 形・谷の終わり r・振幅・ランプの幅
 
@@ -186,7 +187,8 @@ function plans(segs: Seg[], c: Classes, p: Record<string, any>) {
 
 /**
  * 子音ごとの既定の谷: 音素ごとに {amp: 谷の底の振幅（1 = 凹みなし）, w: 広さ（音素の長さに対する割合）}、子音でなければ null。
- * isConsonant(音素) は言語パックの判定（pau・核でない音素）
+ * isConsonant(音素) は言語パックの判定（pau・核でない音素）。台形（cl の閉鎖・burst_shape: trap の破裂）は ramp
+ * （ランプの幅。フレーム）を足し、cl は hold: true（開放位置 = 音素の終わりで、戻さずに次の子音へ渡す）
  */
 export function dips(phonemes: string[], phDurs: ArrayLike<number>, cfg: Record<string, any> | null | undefined,
                      language: string, isConsonant: (ph: string) => boolean): Array<Dip | null> {
@@ -199,7 +201,14 @@ export function dips(phonemes: string[], phDurs: ArrayLike<number>, cfg: Record<
   segs.forEach(([, s, e], i) => {
     if (out[i] === null || e <= s) return;
     const b = pl.burst?.get(i);
-    if (b) out[i] = { amp: b[2], w: (b[1] - s) / (e - s) };
+    if (b) {
+      const d: Dip = { amp: b[2], w: (b[1] - s) / (e - s) };
+      if (b[0] !== "nu") {
+        d.ramp = b[3];
+        if (b[0] === "cl_trap") d.hold = true;
+      }
+      out[i] = d;
+    }
     else if (pl.fric?.has(i)) out[i] = { amp: pl.fric.get(i)!, w: 1 };
     else if (pl.son?.has(i)) out[i] = { amp: pl.son.get(i)!, w: 1 };
   });
@@ -272,17 +281,32 @@ export function loggain(phonemes: string[], phDurs: ArrayLike<number>, cfg: Reco
     if (pl.burst) for (const [i, v] of pl.burst) { const m = sc(i); if (m !== null) pl.burst.set(i, [v[0], v[1], v[2] ** m, v[3]]); }
     for (const plan of [pl.fric, pl.son]) if (plan) for (const [i, a] of plan) { const m = sc(i); if (m !== null) plan.set(i, a ** m); }
   }
+  // 上書き: 既定が台形の子音は台形のまま（床 = amp、開放位置 = 頭から n フレーム。ランプの幅は既定のまま）。
+  // cl を最後まで凹ませる（n = 音素の長さ）なら閉鎖のまま（戻さない）。ほかは ν 字の谷（下の nuOv）
+  const trapOv = new Set<number>();
+  if (pl.burst) {
+    for (const [i, o] of ov) {
+      const b = pl.burst.get(i);
+      if (!b || b[0] === "nu") continue;
+      const [, s, e] = segs[i];
+      const n = Math.min(e - s, Math.max(MIN_DIP, b[3], roundHalfEven(o.w * (e - s))));
+      const hold = b[0] === "cl_trap" && n === e - s;
+      pl.burst.set(i, [hold ? "cl_trap" : "trap", hold ? e : s + n, o.amp, b[3]]);
+      trapOv.add(i);
+    }
+  }
+  const nuOv = [...ov.keys()].filter((i) => !trapOv.has(i));
   const curves: Float32Array[] = [];
-  if (pl.burst) curves.push(burst(T, segs, pl.burst, new Set(ov.keys())));
+  if (pl.burst) curves.push(burst(T, segs, pl.burst, new Set(nuOv)));
   for (const plan of [pl.fric, pl.son]) {
     if (!plan) continue;
     const g = new Float32Array(T).fill(1);
     for (const [i, amp] of plan) if (!ov.has(i)) hannDip(g, segs[i][1], segs[i][2], amp);
     curves.push(g);
   }
-  if (ov.size) {
+  if (nuOv.length) {
     const g = new Float32Array(T).fill(1);
-    for (const i of [...ov.keys()].sort((a, b) => a - b)) {
+    for (const i of nuOv.sort((a, b) => a - b)) {
       const o = ov.get(i)!;
       const [, s, e] = segs[i];
       const n = Math.min(e - s, Math.max(MIN_DIP, roundHalfEven(o.w * (e - s))));

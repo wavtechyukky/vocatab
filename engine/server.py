@@ -134,6 +134,10 @@ def analyze(r: AnalyzeReq):
             dip = an.dips[j] if an.dips is not None else None
             if dip is not None:                           # 子音の既定の凹み（深さ dB・広さ）。画面が描く
                 e["dip"] = {"db": float(20.0 * np.log10(max(dip["amp"], 1e-4))), "w": float(dip["w"])}
+                if "ramp" in dip:                         # 台形（cl の閉鎖など）: ランプの幅（秒）、戻さずに次の子音へ渡すか
+                    e["dip"]["ramp"] = float(dip["ramp"]) / fr
+                    if dip.get("hold"):
+                        e["dip"]["hold"] = True
             if eng.merge_melisma and an.held and an.held[j]:
                 e["held"] = True                          # 音響モデルで前の母音とまとめる。画面は前の音素の続きとして描く
             phs.append(e)

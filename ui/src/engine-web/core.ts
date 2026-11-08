@@ -382,8 +382,10 @@ export class Engine {
           return { ph: p, frames: an.phDurs[j], shift: an.shifts[j] ?? 0,
                    note: an.noteIndex[j] >= 0 && ids.length ? ids[Math.min(an.noteIndex[j], ids.length - 1)] : null,
                    nucleus: ps.isNucleus(p), // 画面の色分け（母音など）
-                   // 子音の既定の凹み（深さ dB・広さ）。画面が描く（engine/server.py と同じ）
-                   ...(d ? { dip: { db: 20 * Math.log10(Math.max(d.amp, 1e-4)), w: d.w } } : {}),
+                   // 子音の既定の凹み（深さ dB・広さ。台形ならランプの幅（秒）と hold）。画面が描く（engine/server.py と同じ）
+                   ...(d ? { dip: { db: 20 * Math.log10(Math.max(d.amp, 1e-4)), w: d.w,
+                                    ...(d.ramp !== undefined ? { ramp: d.ramp / fr } : {}), ...(d.hold ? { hold: true } : {}) } }
+                     : {}),
                    // 音響モデルで前の母音とまとめる音素。画面は前の音素の続きとして描く
                    ...(vb.acoustic_merge_melisma && an.held[j] ? { held: true } : {}) };
         }),

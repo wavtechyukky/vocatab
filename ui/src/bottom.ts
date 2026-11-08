@@ -25,10 +25,22 @@ const DIP_FINE = 0.25; // Shift を押しながら動かすときの倍率
 
 const dipKey = (s: { noteId: number; idx: number }): string => `${s.noteId}:${s.idx}`;
 
-/** 凹みの曲線（ν 字の谷）: 谷の中の位置 u（0〜1）での dB。底（u = 0.5）が db */
-function dipCurveDb(db: number, u: number): number {
+/**
+ * 凹みの曲線: 谷の中の位置 u（0〜1）での dB（エンジンの engine/x0shape.py と同じ形）。ramp が 0 なら ν 字（Hann 型、底 u = 0.5 が db）。
+ * ramp（谷の区間に対するランプの幅の割合）があれば台形: 頭から ramp で db まで落とし、床を保ち、終わりの ramp で戻す
+ * （hold なら戻さない。cl の閉鎖を最後まで凹ませたとき）
+ */
+function dipCurveDb(db: number, u: number, ramp = 0, hold = false): number {
   const amp = Math.pow(10, db / 20);
-  const g = 1 - (1 - amp) * (1 - Math.cos(2 * Math.PI * u)) / 2;
+  const rc = (x: number): number => (1 - Math.cos(Math.PI * Math.min(1, Math.max(0, x)))) / 2; // 余弦のランプ（0 → 1）
+  let g: number;
+  if (ramp <= 0) g = 1 - (1 - amp) * (1 - Math.cos(2 * Math.PI * u)) / 2;
+  else if (u < ramp) g = 1 + (amp - 1) * rc(u / ramp);
+  else if (hold) g = amp;
+  else {
+    const up = Math.max(ramp, 1 - ramp); // 戻し始める所
+    g = u < up || up >= 1 ? amp : amp + (1 - amp) * rc((u - up) / (1 - up));
+  }
   return 20 * Math.log10(Math.max(g, 1e-4));
 }
 
@@ -399,11 +411,15 @@ export class PhonemePanel {
       ctx.globalAlpha = 0.35;
       ctx.fillRect(x0, Math.round(y0), Math.max(1, x1 - x0 - 1), 1);
       ctx.globalAlpha = 1;
-      // 谷（ν 字）: 塗りと線
-      const N = 24;
+      // 谷（ν 字。cl の閉鎖などは台形）: 塗りと線
+      const N = 48;
+      const regionSec = d.w * (s.end - s.start);
+      const ramp = d.ramp && regionSec > 0 ? Math.min(1, d.ramp / regionSec) : 0;
+      const hold = !!d.hold && d.w >= 1 - 1e-6; // 最後まで凹ませた cl だけ戻さない（エンジンと同じ）
+      const curve = (k: number): number => this.dipY(dipCurveDb(d.db, k / N, ramp, hold));
       ctx.beginPath();
       ctx.moveTo(x0, y0);
-      for (let k = 0; k <= N; k++) ctx.lineTo(x0 + ((xe - x0) * k) / N, this.dipY(dipCurveDb(d.db, k / N)));
+      for (let k = 0; k <= N; k++) ctx.lineTo(x0 + ((xe - x0) * k) / N, curve(k));
       ctx.lineTo(xe, y0);
       ctx.closePath();
       ctx.fillStyle = soft;
@@ -411,7 +427,7 @@ export class PhonemePanel {
       ctx.beginPath();
       for (let k = 0; k <= N; k++) {
         const x = x0 + ((xe - x0) * k) / N;
-        const y = this.dipY(dipCurveDb(d.db, k / N));
+        const y = curve(k);
         if (k === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }

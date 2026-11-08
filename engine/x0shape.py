@@ -10,9 +10,11 @@ _acoustic が使う（`apply: mel` なら同じ曲線を、擬似 mel ではな�
   - ν（鳴り子音）: 鼻音・流音・わたりなども同じく ν 字に凹ませる。
 
 音符ごとの上書き（画面の音素のパネルで動かした凹み）: overrides = {句の中の音素の番号: {"amp": 谷の底の振幅, "w": 広さ}}。
-上書きした音素は、既定の形の代わりに、音素の頭から w（音素の長さに対する割合）の区間の ν 字の谷になる
-（谷の底 = 区間の真ん中 = 振幅 amp）。上書きはどの子音にも付けられる（既定で触らない s・h などにも）。
-dips() は、子音ごとの既定の谷（振幅と広さ）を返す（画面が既定の凹みを描く・上書きの片方だけが決まったときに使う）。
+上書きした音素は、音素の頭から w（音素の長さに対する割合）の区間の谷になる。既定が台形の子音（cl の閉鎖・
+burst_shape: trap の破裂）は台形のまま、床 = amp・開放位置 = 区間の終わりにする（cl を最後まで凹ませるなら閉鎖のまま）。
+ほかは ν 字の谷（谷の底 = 区間の真ん中 = 振幅 amp）。上書きはどの子音にも付けられる（既定で触らない s・h などにも）。
+dips() は、子音ごとの既定の谷（振幅・広さ。台形ならランプの幅も）を返す（画面が既定の凹みを描く・上書きの片方だけが
+決まったときに使う）。
 """
 from __future__ import annotations
 
@@ -184,7 +186,8 @@ def _plans(segs, c, p):
 def dips(phonemes, ph_durs, cfg: dict | None, language: str, is_consonant) -> list:
     """子音ごとの既定の谷: 音素ごとに {"amp": 谷の底の振幅（1 = 凹みなし）, "w": 広さ（音素の長さに対する割合）}、
     子音でなければ None。is_consonant(音素) は言語パックの判定（pau・核でない音素）。
-    台形（cl の閉鎖など）は、谷の底 = 床、広さ = 頭から開放位置まで、として表す。"""
+    台形（cl の閉鎖・burst_shape: trap の破裂）は、谷の底 = 床、広さ = 頭から開放位置まで、として表し、"ramp"（落とす・
+    戻すランプの幅。フレーム）を足す。cl は "hold": True（開放位置 = 音素の終わりで、戻さずに次の子音へ渡す）。"""
     c = classes_of(language)
     p = params_of(cfg)
     segs, _ = _segs(phonemes, ph_durs)
@@ -196,8 +199,12 @@ def dips(phonemes, ph_durs, cfg: dict | None, language: str, is_consonant) -> li
         if out[i] is None or e <= s:
             continue
         if burst is not None and i in burst:
-            kind, r, amp, _ = burst[i]
+            kind, r, amp, wr = burst[i]
             out[i] = {"amp": amp, "w": (r - s) / (e - s)}
+            if kind != "nu":
+                out[i]["ramp"] = wr
+                if kind == "cl_trap":
+                    out[i]["hold"] = True
         elif fric is not None and i in fric:
             out[i] = {"amp": fric[i], "w": 1.0}
         elif son is not None and i in son:
@@ -230,9 +237,22 @@ def loggain(phonemes, ph_durs, cfg: dict | None, language: str, overrides: dict 
     burst, fric, son = _plans(segs, c, p)
     if scales:
         burst, fric, son = _scale_plans(burst, fric, son, {int(k): float(m) for k, m in scales.items()})
+    # 上書き: 既定が台形の子音は台形のまま（床 = amp、開放位置 = 頭から n フレーム。ランプの幅は既定のまま）。
+    # cl を最後まで凹ませる（n = 音素の長さ）なら閉鎖のまま（戻さない）。ほかは ν 字の谷（下の nu_ov）
+    trap_ov = {}
+    if burst is not None:
+        for i, o in ov.items():
+            if i in burst and burst[i][0] != "nu":
+                kind, _, _, wr = burst[i]
+                _, s, e = segs[i]
+                n = min(e - s, max(MIN_DIP, wr, int(round(float(o["w"]) * (e - s)))))
+                hold = kind == "cl_trap" and n == e - s
+                trap_ov[i] = ("cl_trap" if hold else "trap", e if hold else s + n, float(o["amp"]), wr)
+        burst = {**burst, **trap_ov}
+    nu_ov = {i: o for i, o in ov.items() if i not in trap_ov}
     curves = []
     if burst is not None:
-        curves.append(_burst(T, segs, burst, ov))
+        curves.append(_burst(T, segs, burst, nu_ov))
     for plan in (fric, son):
         if plan is not None:
             g = np.ones(T, np.float32)
@@ -240,9 +260,9 @@ def loggain(phonemes, ph_durs, cfg: dict | None, language: str, overrides: dict 
                 if i not in ov:
                     _hann_dip(g, segs[i][1], segs[i][2], amp)
             curves.append(g)
-    if ov:
+    if nu_ov:
         g = np.ones(T, np.float32)
-        for i, o in sorted(ov.items()):
+        for i, o in sorted(nu_ov.items()):
             _, s, e = segs[i]
             n = min(e - s, max(MIN_DIP, int(round(float(o["w"]) * (e - s)))))
             _hann_dip(g, s, s + n, float(o["amp"]))
