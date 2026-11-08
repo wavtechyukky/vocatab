@@ -49,6 +49,10 @@ export interface VoicebankWeb {
   x0_shape?: Record<string, any>;
   /** 音響モデルの入力の名前（exc_noise・x0_loggain を持つかを、モデルを読む前に知るため） */
   acoustic_inputs?: string[];
+  /** 伸ばしの音符で続く母音を、音響モデルには前の音素とまとめて渡す（voicebank.yaml の acoustic_merge_melisma） */
+  acoustic_merge_melisma?: boolean;
+  /** 英語の発音辞書（dict/en_cmudict.txt）の場所と大きさ。英語のボイスバンクだけ */
+  g2p_dict?: { path: string; bytes: number };
 }
 
 /** voicebanks/<名前>/breaths.json（tools/breaths/build_breath_bank.py が書く）。mel は float16 の bin に [128, frames] 行優先で並ぶ */
@@ -104,6 +108,8 @@ export interface PNote {
   pitch_midi: number;
   dur_sec: number;
   gap_after_sec: number;
+  /** 楽譜で伸ばし・音節の続きの記号（歌詞なし・-・ー・+ で始まる歌詞）だった音符（PhonemeSequence.held を決めるのに使う） */
+  melisma: boolean;
 }
 
 /** 句。Phrase と同じ */
@@ -122,6 +128,8 @@ export interface PhonemeSequence {
   is_vowel: Uint8Array;
   note_event_starts: Uint8Array;
   leading_pau_sec: number;
+  /** 伸ばしの音符で、前の音符の母音がそのまま続く音素で 1（「skies」「-」の 2 つ目の ay） */
+  held: Uint8Array;
 }
 
 // ── ONNX のモデルへの入力 ──

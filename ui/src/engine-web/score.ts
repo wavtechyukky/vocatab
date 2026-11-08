@@ -1,8 +1,11 @@
 // 楽譜 → 句（engine/pipeline.py の PrettyPitchLeapSinger.phrases_from_notes・_lyric_phonemes と、
-// PrettyPitch の svs/score_io.py の score_to_phrases・_apply_g2p・_resolve_phonemes・_tokenize_lyric・_as_phoneme_list と同じ）。
-// 歌詞 → 音素・休符・メリスマ・句の切れ目を Python と同じ規則で決める（ここがずれると後の段がすべてずれる）。
+// PrettyPitch の svs/score_io.py の score_to_phrases・_apply_g2p・_resolve_phonemes・_tokenize_lyric・_as_phoneme_list・
+// _is_melisma_note と同じ）。歌詞 → 音素・休符・メリスマ・句の切れ目を Python と同じ規則で決める（ここがずれると後の段が
+// すべてずれる）。
+import { applyG2pEn, dictAt, explicitPhonemes } from "./g2p_en";
 import { lyricSyllables, syllablesToPhonemes } from "./g2p_ko";
 import { PhoneSet } from "./phoneset";
+import { isAscii, pyRepr, pySplit, pyStrip } from "./pystr";
 import type { PNote, Phrase, ScoreNote, VoicebankWeb } from "./types";
 
 /** 画面の 1 音符（刻みの位置・長さは 4 分音符 = tpq 刻み） */
@@ -12,37 +15,6 @@ export interface EditorNote {
   dur: number;
   pitch: number;
   lyric?: string | null;
-}
-
-// ── Python の文字列の扱いに合わせる道具 ──
-
-// Python の str.split()・str.strip() が空白とみなす文字（JS の \s とは少し違う: \x1c〜\x1f・\x85 を含み、﻿ を含まない）
-const PY_WS = "\\t\\n\\x0b\\x0c\\r\\x1c-\\x1f \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
-const WS_RUN = new RegExp(`[${PY_WS}]+`);
-const WS_EDGE = new RegExp(`^[${PY_WS}]+|[${PY_WS}]+$`, "g");
-
-/** str.split()（引数なし）と同じ: 空白の並びで切り、空の切れ端は捨てる */
-export const pySplit = (s: string): string[] => s.split(WS_RUN).filter((t) => t !== "");
-/** str.strip() と同じ */
-export const pyStrip = (s: string): string => s.replace(WS_EDGE, "");
-/** str.isascii() と同じ（空文字も真） */
-const isAscii = (s: string): boolean => /^[\x00-\x7f]*$/.test(s);
-
-/** 文字列の repr（エラーの文面を Python と揃えるため。印字できる文字はそのまま） */
-function pyRepr(s: string): string {
-  const q = s.includes("'") && !s.includes('"') ? '"' : "'";
-  let out = q;
-  for (const ch of s) {
-    const c = ch.codePointAt(0)!;
-    if (ch === "\\") out += "\\\\";
-    else if (ch === q) out += "\\" + q;
-    else if (ch === "\n") out += "\\n";
-    else if (ch === "\r") out += "\\r";
-    else if (ch === "\t") out += "\\t";
-    else if (c < 0x20 || c === 0x7f) out += "\\x" + c.toString(16).padStart(2, "0");
-    else out += ch;
-  }
-  return out + q;
 }
 
 // ── ボイスバンクごとの表（毎回作り直さないよう取り置く） ──
@@ -89,10 +61,18 @@ function tables(vb: VoicebankWeb): ScoreTables {
 /**
  * PrettyPitchLeapSinger._lyric_phonemes: 英数字だけの歌詞を音素の列にする（仮名を含む歌詞は null。モーラ表に任せる）。
  * 空白で区切った記号が音素ならそのまま使い、区切っていない所（「kakiku」「shu」）は音素の名前の最長一致で切る。
+ * 英語は、音素の書き方（[hh eh l ow]・空白で区切った 2 つ以上の音素・子音 1 つ）ならその音素、それ以外は null
+ * （単語は英語の G2P が発音辞書で引き、続く + の音符へ音節を配る）
  */
 export function lyricPhonemes(vb: VoicebankWeb, lyric: string): string[] | null {
-  if (!isAscii(lyric)) return null;
   const t = tables(vb);
+  if (t.ps.g2p === "en") {
+    const ph = explicitPhonemes(t.ps, lyric);
+    const bad = (ph ?? []).filter((p) => !t.lyricSet.has(p));
+    if (bad.length) throw new Error(`歌詞「${lyric}」の音素「${bad.join(" ")}」はこのボイスバンクのモデルにありません`);
+    return ph;
+  }
+  if (!isAscii(lyric)) return null;
   const out: string[] = [];
   for (const tok of pySplit(lyric)) {
     if (t.lyricSet.has(tok)) {
@@ -164,13 +144,19 @@ function resolvePhonemes(t: ScoreTables, sn: ScoreNote, prevVowel: string): stri
 }
 
 /**
- * score_io._apply_g2p: 言語パックが g2p を持つ言語（韓国語）で、歌詞の音素を先に決めておく。
- * 休符を挟まずに続く音符の並び（休符・音素を直接書いた音符・ハングルの無い歌詞で区切る）ごとに G2P をかけ、
+ * score_io._apply_g2p: 言語パックが g2p を持つ言語（韓国語・英語）で、歌詞の音素を先に決めておく。英語は g2p_en.ts の
+ * applyG2pEn（style は + の読み方。辞書は vb.g2p_dict の場所に読み込んでおく）。
+ * 韓国語は、休符を挟まずに続く音符の並び（休符・音素を直接書いた音符・ハングルの無い歌詞で区切る）ごとに G2P をかけ、
  * 音符ごとの音素を phonemes に入れる。1 音符に複数の音節があってもよい。
  * メリスマ（歌詞なし・伸ばし記号）の音符は、直前の音節の母音を伸ばし、その音節の終声はメリスマの最後の音符へ移す
  * （「밤 -」→ b a | a M。終声は音を伸ばし終えてから閉じる）。
  */
-function applyG2p(t: ScoreTables, score: ScoreNote[]): ScoreNote[] {
+function applyG2p(t: ScoreTables, score: ScoreNote[], vb: VoicebankWeb, style: string): ScoreNote[] {
+  if (t.ps.g2p === "en") {
+    const d = vb.g2p_dict ? dictAt(vb.g2p_dict.path) : undefined;
+    if (!d) throw new Error("英語の発音辞書を読み込んでいません");
+    return applyG2pEn(score, t.ps, d, style);
+  }
   if (t.ps.g2p !== "ko") return score;
   const out = score.slice();
   const kind = (sn: ScoreNote): "break" | "mel" | "syl" => {
@@ -238,6 +224,18 @@ export interface ScoreToPhrasesOptions {
   splitSilenceSec?: number;
   pauLeadSec?: number;
   pauTrailSec?: number;
+  /** 英語の + の読み方（g2p_en.LYRIC_STYLES。既定 sequential） */
+  lyricStyle?: string;
+}
+
+/**
+ * score_io._is_melisma_note: 楽譜で伸ばし・音節の続きの記号だった音符か（歌詞なし・空・言語パックの melisma_lyrics・
+ * -・ー・ｰ・+ で始まる歌詞）。前の母音がそのまま続くかは、長さを決めた後の音素の列で見る（PhonemeSequence.held）
+ */
+function isMelismaNote(t: ScoreTables, sn: ScoreNote): boolean {
+  const lyr = sn.lyric;
+  if (lyr === null || pyStrip(lyr) === "") return true;
+  return t.melisma.has(lyr) || lyr === "-" || lyr === "ー" || lyr === "ｰ" || lyr.startsWith("+");
 }
 
 /**
@@ -250,7 +248,7 @@ export function scoreToPhrases(vb: VoicebankWeb, score: ScoreNote[], bpm: number
   const split = opts.splitSilenceSec ?? 0.5;
   const lead = opts.pauLeadSec ?? 0.25;
   const trail = opts.pauTrailSec ?? 0.25;
-  score = applyG2p(t, score); // 韓国語など、規則の G2P を持つ言語だけ
+  score = applyG2p(t, score, vb, opts.lyricStyle ?? "sequential"); // 韓国語・英語など、規則の G2P を持つ言語だけ
   const b2s = 60.0 / bpm;
   const phrases: Phrase[] = [];
   let cur: PNote[] = [];
@@ -274,7 +272,7 @@ export function scoreToPhrases(vb: VoicebankWeb, score: ScoreNote[], bpm: number
     }
     if (!cur.length) phraseStart = cursor;
     const phs = resolvePhonemes(t, sn, prevVowel);
-    cur.push({ phonemes: phs, pitch_midi: sn.midi, dur_sec: durS, gap_after_sec: 0.0 });
+    cur.push({ phonemes: phs, pitch_midi: sn.midi, dur_sec: durS, gap_after_sec: 0.0, melisma: isMelismaNote(t, sn) });
     const nuc = lastNucleus(t.ps, phs);
     if (nuc !== null) prevVowel = nuc;
     cursor += durS;
@@ -286,9 +284,15 @@ export function scoreToPhrases(vb: VoicebankWeb, score: ScoreNote[], bpm: number
 /**
  * PrettyPitchLeapSinger.phrases_from_notes: 画面の音符 → 句の列と、句ごとの音符の id。
  * 音符の隙間は休符にする（0.5 秒以上の休符で句を切る）。重なった音符は前の音符を後ろの頭で切る。
+ * 歌詞が空・-・ー・+ で始まる音符は伸ばし（前の母音を続ける）。英語だけは記号をそのまま G2P へ渡し、lyricStyle で
+ * 単語の音節を続く音符へ配る。ほかの言語は 1 音符に 1 音節なので、+ で始まる記号はどれも伸ばし
  */
-export function phrasesFromNotes(vb: VoicebankWeb, notes: EditorNote[], bpm: number,
-                                 tpq = 480): Array<{ phrase: Phrase; ids: number[] }> {
+export function phrasesFromNotes(vb: VoicebankWeb, notes: EditorNote[], bpm: number, tpq = 480,
+                                 lyricStyle = "sequential"): Array<{ phrase: Phrase; ids: number[] }> {
+  if (lyricStyle !== "sequential" && lyricStyle !== "count") {
+    throw new Error(`lyric_style は ('sequential', 'count') のどれか（${pyRepr(lyricStyle)}）`);
+  }
+  const en = tables(vb).ps.g2p === "en";
   const ns = notes.slice().sort((a, b) => Number(a.onset) - Number(b.onset)); // sorted と同じく安定
   const score: ScoreNote[] = [];
   const ids: number[] = [];
@@ -302,16 +306,16 @@ export function phrasesFromNotes(vb: VoicebankWeb, notes: EditorNote[], bpm: num
     onset = Math.max(onset, cursor);
     if (end <= onset) continue;
     const lyric = pyStrip(String(n.lyric || ""));
-    const melisma = lyric === "" || lyric === "-" || lyric === "ー" || lyric === "+";
+    const melisma = lyric === "" || lyric === "-" || lyric === "ー" || lyric.startsWith("+");
     score.push({
       dur_beats: (end - onset) / tpq, midi: Math.trunc(Number(n.pitch)),
-      lyric: melisma ? null : lyric, is_rest: false,
+      lyric: melisma ? (en ? lyric : null) : lyric, is_rest: false,
       phonemes: melisma ? null : lyricPhonemes(vb, lyric),
     });
     ids.push(n.id);
     cursor = end;
   }
-  const phrases = scoreToPhrases(vb, score, bpm);
+  const phrases = scoreToPhrases(vb, score, bpm, { lyricStyle });
   const out: Array<{ phrase: Phrase; ids: number[] }> = [];
   let i = 0;
   for (const ph of phrases) {

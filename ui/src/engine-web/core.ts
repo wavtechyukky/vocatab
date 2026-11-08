@@ -4,6 +4,7 @@
 import { alignDurs, finishDurations, prepareDurations } from "./durations";
 import { f0Feeds, finishF0, frameNoteIndex, prepareF0 } from "./f0host";
 import { fetchCached } from "./fetchcache";
+import { parseDict, registerDict } from "./g2p_en";
 import { wavToMel } from "./melspec";
 import type { AnalyzeReq, AnalyzeResp, BreathIndexResp, BreathReq, BreathResp, RestoreEntry, SynthReq, SynthResp } from "./protocol";
 import { applyRetakes, normalNoise } from "./rng";
@@ -148,6 +149,8 @@ interface Analysis {
   shifts: number[];
   /** 子音ごとの既定の凹み（x0shape.dips。凹みを作らないボイスバンクは null） */
   dips: Array<X0.Dip | null> | null;
+  /** 音素ごとの、伸ばしの音符で前の母音がそのまま続くか（PhonemeSequence.held） */
+  held: boolean[];
 }
 
 /** ⑤⑥ の結果（取り置き） */
@@ -202,6 +205,7 @@ export class Engine {
   private acCache: ByteLRU<AcousticHit>;
   private vocCache: ByteLRU<VocOut>;
   private breathBanks = new Map<string, Promise<{ idx: BreathBank; data: Uint16Array } | null>>(); // ボイスバンク → ブレスの束
+  private enDicts = new Map<string, Promise<void>>(); // 英語の発音辞書の場所 → 読み込み
   private loading = new Map<string, { loaded: number; total: number }>();
   noise: NoiseHook = {};
 
@@ -327,12 +331,28 @@ export class Engine {
     return r;
   }
 
+  /** 英語の発音辞書（dict/en_cmudict.txt、約 3 MB）を読んで G2P に渡す。英語のボイスバンクで初めて要るときだけ読む */
+  private enDict(vb: VoicebankWeb): Promise<void> {
+    const g = vb.g2p_dict!;
+    let p = this.enDicts.get(g.path);
+    if (!p) {
+      p = (async () => {
+        const bytes = await fetchCached(this.url(g.path), g.bytes, () => undefined);
+        registerDict(g.path, parseDict(new TextDecoder().decode(bytes)));
+      })();
+      p.catch(() => this.enDicts.delete(g.path)); // 失敗したら次に読み直す
+      this.enDicts.set(g.path, p);
+    }
+    return p;
+  }
+
   // ── 解析（engine/server.py の analyze と PrettyPitchLeapSinger.analyze） ──
   async analyze(r: AnalyzeReq): Promise<AnalyzeResp> {
     const vb = this.vbs.get(r.voicebank);
     if (!vb) throw new Error(`ボイスバンクがありません: ${r.voicebank}`);
     const fr = vb.frame_rate;
-    const phrases = phrasesFromNotes(vb, r.notes, r.bpm);
+    if (vb.g2p_dict) await this.enDict(vb); // 英語の発音辞書（初めて要るときに読む）
+    const phrases = phrasesFromNotes(vb, r.notes, r.bpm, 480, r.lyric_style ?? "sequential");
     const retake = new Map(r.notes.map((n) => [n.id, n.retake_f0 ?? 0]));
     const shift = new Map(r.notes.map((n) => [n.id, Object.fromEntries(Object.entries(n.ph_shift ?? {})
       .filter(([, v]) => v).map(([k, v]) => [Number(k), Number(v)]))]));
@@ -363,7 +383,9 @@ export class Engine {
                    note: an.noteIndex[j] >= 0 && ids.length ? ids[Math.min(an.noteIndex[j], ids.length - 1)] : null,
                    nucleus: ps.isNucleus(p), // 画面の色分け（母音など）
                    // 子音の既定の凹み（深さ dB・広さ）。画面が描く（engine/server.py と同じ）
-                   ...(d ? { dip: { db: 20 * Math.log10(Math.max(d.amp, 1e-4)), w: d.w } } : {}) };
+                   ...(d ? { dip: { db: 20 * Math.log10(Math.max(d.amp, 1e-4)), w: d.w } } : {}),
+                   // 音響モデルで前の母音とまとめる音素。画面は前の音素の続きとして描く
+                   ...(vb.acoustic_merge_melisma && an.held[j] ? { held: true } : {}) };
         }),
         plain: an.plainLog2, vib: an.vibLog2, uv: an.uv, base: an.baseLog2, seed: an.seed,
       });
@@ -391,7 +413,8 @@ export class Engine {
     const phDurs = alignDurs(dur.phDurs, f.T);
     return { phonemes: dur.seq.phonemes, phDurs, startSec: dur.startSec,
              plainLog2: f.plainLog2, vibLog2: f.vibLog2, uv: f.uv, baseLog2: f.baseLog2,
-             noteIndex: dur.noteIndex, seed, shifts: dur.applied, dips: phraseDips(vb, dur.seq.phonemes, phDurs) };
+             noteIndex: dur.noteIndex, seed, shifts: dur.applied, dips: phraseDips(vb, dur.seq.phonemes, phDurs),
+             held: Array.from(dur.seq.held, (x) => x === 1) };
   }
 
   /**
@@ -413,6 +436,8 @@ export class Engine {
         seed: e.seed,
         shifts: e.phonemes.map((p) => p.shift ?? 0),
         dips: phraseDips(this.vbs.get(e.vb)!, phonemes, phDurs), // 音素と長さから決まるので作り直せる
+        // まとめる母音（音響モデルで使うのはまとめるボイスバンクだけ。画面に返した印から戻す）
+        held: e.phonemes.map((p) => !!p.held),
       };
       this.analyses.put(e.key, { vb: e.vb, an, ids: e.ids.slice() });
       n++;
@@ -450,7 +475,7 @@ export class Engine {
     // ⑤ 音響 → ⑥ mel の後処理（F0・歌い手・取り直し・凹みが同じなら使い回す）
     const acKey = digest(an.seed, r.singer, an.phonemes, an.phDurs, f0Hz.subarray(0, T), rt,
                          [...ov].sort((a, b) => a[0] - b[0]).map(([j, o]) => [j, o.amp, o.w]),
-                         [...sc].sort((a, b) => a[0] - b[0]));
+                         [...sc].sort((a, b) => a[0] - b[0]), vb.acoustic_merge_melisma ? an.held : null);
     let ac = this.acCache.get(acKey);
     if (!ac) {
       const acSess = await this.session(vb.key, "acoustic");
@@ -470,8 +495,8 @@ export class Engine {
       }
       // 子音の凹み: フレームごとの ln(gain)。既定は擬似 mel に（x0_loggain）、apply: mel なら出力の mel に足す
       const x0 = x0Curves(vb, an, ov, sc, T, inputs.includes("x0_loggain"));
-      const a = acousticFeeds(vb, { phonemes: an.phonemes, phDurs: an.phDurs, uv: an.uv, noteIndex: an.noteIndex }, f0Hz, r.singer,
-                              exc, x0.feed);
+      const a = acousticFeeds(vb, { phonemes: an.phonemes, phDurs: an.phDurs, uv: an.uv, noteIndex: an.noteIndex, held: an.held },
+                              f0Hz, r.singer, exc, x0.feed);
       const mel = (await this.run(acSess, a.feeds, ["mel"])).mel;
       const melIn = melPostprocess(mel, T, a.uvHard, vb.frame_rate);
       if (x0.mel) {

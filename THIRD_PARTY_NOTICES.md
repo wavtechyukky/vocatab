@@ -10,6 +10,7 @@ repository, carry these notices with it.
 | NHVSing vocoder | `vocoders/nhvsing_v3_2_1/vocoder.onnx` | NHVSing project; weights are non-commercial (see §2) |
 | Growl effect | `engine/voiceparams.py` `growl()`, `ui/src/engine-web/voiceparams.ts` | follows hifisampler `util/growl.py`, Apache-2.0 (see §3) |
 | onnxruntime-web 1.20.1 | loaded at run time from jsDelivr, **not** in this repo | MIT, Microsoft (see §4) |
+| CMU Pronouncing Dictionary (English lyrics) | `dict/en_cmudict.txt`, written by `tools/export_web_assets.py` only when an English voicebank is added; **not** in this repo | BSD-style, Carnegie Mellon University (see §5) |
 | esbuild | used at build time only (`tools/build.py`), **not** in this repo | MIT |
 
 Everything else in this repository is our own work and is MIT.
@@ -62,6 +63,16 @@ restores the band's RMS). The Apache-2.0 text is in [`LICENSES/Apache-2.0.txt`](
 The in-browser engine loads `onnxruntime-web` 1.20.1 (MIT, © Microsoft Corporation) at run time
 from `https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/`
 (`ui/src/engine-web/worker.ts`). Nothing from it is checked into this repository.
+
+## 5. CMU Pronouncing Dictionary (English lyrics)
+
+English lyrics are read with the CMU Pronouncing Dictionary (CMUdict,
+<https://github.com/cmusphinx/cmudict>), converted by PrettyPitch to its `en_full` phoneme names
+(`dict/en_cmudict.txt` in PrettyPitch; the Python engine reads it there). This repository ships no
+English voicebank, so the dictionary is not checked in: `tools/export_web_assets.py` copies it to
+`dict/en_cmudict.txt` for the in-browser engine when you add an English voicebank. If you
+redistribute that file, keep its header and the BSD-style license, copied in
+[`LICENSES/cmudict-BSD.txt`](LICENSES/cmudict-BSD.txt).
 
 ---
 

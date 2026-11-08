@@ -56,12 +56,15 @@ for (const name of cases()) {
       const sc = X0.dipScales(dips, r.ph_durs, s.params.articulation ?? Float32Array.of(VP.NEUTRAL.articulation), ov);
       const x0 = x0Curves(vb, { phonemes: r.phonemes, phDurs: r.ph_durs, dips }, ov, sc, T, "x0_loggain" in gf);
       // ⑤ 音響モデルへの入力
-      const ac = acousticFeeds(vb, { phonemes: r.phonemes, phDurs: r.ph_durs, uv: r.uv, noteIndex: r.note_index },
+      // 伸ばしの母音は、acoustic_merge_melisma のボイスバンクなら前の音素とまとめて渡す（tokens・durations が短くなる）
+      const ac = acousticFeeds(vb, { phonemes: r.phonemes, phDurs: r.ph_durs, uv: r.uv, noteIndex: r.note_index, held: r.held },
         s.f0_hz, c.input.singer, gf.exc_noise ?? null, x0.feed);
       same(`${tag} tokens`, num(ac.feeds.tokens), Array.from(gf.tokens));
       same(`${tag} durations`, num(ac.feeds.durations), Array.from(gf.durations));
+      const nUnits = gf.tokens.length;
+      if (nUnits !== r.phonemes.length) console.log(`    まとめた伸ばしの母音: ${r.phonemes.length - nUnits} 個`);
       same(`${tag} 入力の形`, Object.fromEntries(Object.entries(ac.feeds).map(([k, f]) => [k, f.dims])),
-        { tokens: [1, r.phonemes.length], durations: [1, r.phonemes.length], f0: [1, T], spk_embed: [1, 256],
+        { tokens: [1, nUnits], durations: [1, nUnits], f0: [1, T], spk_embed: [1, 256],
           ...(gf.exc_noise ? { exc_noise: [1, T * 256] } : {}), ...(gf.x0_loggain ? { x0_loggain: [1, T] } : {}) });
       if (gf.x0_loggain) {
         const g = ac.feeds.x0_loggain.data as Float32Array;

@@ -16,7 +16,7 @@ for (const name of cases()) {
   const vb = vbFor(name) as VoicebankWeb;
   const c = loadCase(name);
   const inp = c.input;
-  const got = phrasesFromNotes(vb, inp.notes, inp.bpm);
+  const got = phrasesFromNotes(vb, inp.notes, inp.bpm, 480, inp.lyric_style ?? "sequential");
   same(`${name}: 句の数`, got.length, c.phrases.length);
   c.phrases.forEach((g: any, pi: number) => {
     const tag = `${name} 句 ${pi}`;
@@ -62,6 +62,7 @@ for (const name of cases()) {
     same(`${tag}: note_midi`, num(r.seq.note_midi), num(po.note_midi));
     same(`${tag}: is_vowel`, num(r.seq.is_vowel), num(po.is_vowel));
     same(`${tag}: note_event_starts`, num(r.seq.note_event_starts), num(po.note_event_starts));
+    if (po.held) same(`${tag}: held（伸ばしの母音）`, num(r.seq.held), num(po.held));
     close(`${tag}: leading_pau_sec`, [r.seq.leading_pau_sec], [po.leading_pau_sec]);
     close(`${tag}: phrase_start_sec`, [r.startSec, r.onset0Sec], g.start_sec.out, 1e-9);
 

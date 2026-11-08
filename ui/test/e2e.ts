@@ -80,11 +80,12 @@ async function runCase(name: string): Promise<void> {
   const excq = c.phrases.map((p: any) => p.synth[0].ac_run.feeds.exc_noise as Float32Array);
   const vocq = c.phrases.map((p: any) => p.synth[0].voc_run.feeds.noise as Float32Array);
   eng.noise = { f0: () => f0q.shift() ?? null, exc: () => excq.shift() ?? null, voc: () => vocq.shift() ?? null };
-  const vbKey = "leapsinger_ja_3singer";
+  const vbKey = inp.vb ?? "leapsinger_ja_3singer"; // 英語のケースは手元の英語のボイスバンク（dump_golden.py の GOLDEN_EN_VB）
   const t0 = performance.now();
   const an = await eng.analyze({
     voicebank: vbKey, singer: inp.singer, bpm: inp.bpm, seed: inp.seed,
     notes: inp.notes.map((n: any) => ({ ...n, retake_f0: inp.retake_f0?.[n.id] ?? 0, ph_shift: inp.ph_shift?.[n.id] ?? {} })),
+    lyric_style: inp.lyric_style ?? "sequential",
   });
   log(`解析 ${(performance.now() - t0).toFixed(0)} ms`);
   same("句の数", an.phrases.length, c.phrases.length);

@@ -152,11 +152,16 @@ export function defaultBase(): VoiceBase {
            growl: 0, articulation: 0 };
 }
 
+/** 英語の歌詞の + の読み方。sequential: + ごとに次の 1 音節（既定）、count: + の数だけ音節（++ で 2 音節） */
+export type LyricStyle = "sequential" | "count";
+
 export interface Project {
   bpm: number;
   beatsPerBar: number;
   tracks: Track[];
   activeTrack: number;
+  /** 英語の歌詞の + の読み方（無ければ sequential）。ほかの言語の + はいつも伸ばし */
+  lyricStyle?: LyricStyle;
 }
 
 export function defaultAttrs(): NoteAttrs {

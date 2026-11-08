@@ -6,12 +6,15 @@
   int64 は int32 に縮めて書く（$dtype は元の型のまま）。bool は uint8。
 
 使い方: python tools/golden/dump_golden.py [ケースの名前 ...]   （リポジトリのどこからでも。名前を省くと全部）
+  韓国語のケース（korean）と英語のケース（english・english_count）は、手元のボイスバンク（同梱していない）の名前を
+  環境変数 GOLDEN_KO_VB・GOLDEN_EN_VB で渡したときだけ書き出す（node の試験も同じ変数で走らせる）。
 """
 from __future__ import annotations
 
 import copy
 import dataclasses
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -173,6 +176,16 @@ def main():
     dp_lyr = ["か", "ざ", "な", "っ", "ぱ", "ちゃ", "りょ", "ん", "が", "た", "ま", "し"]
     dp_pit = [67, 69, 71, 72, 72, 74, 72, 71, 69, 67, 69, 67]
     dips = [{"id": i + 1, "onset": 360 * i, "dur": 360, "pitch": p, "lyric": l} for i, (l, p) in enumerate(zip(dp_lyr, dp_pit))]
+    # 英語: 単語の音節を続く記号の音符へ配る（+・++・+3）、伸ばし（- と +~。前の母音が続き、伸ばしの記号で学習した F0 には
+    # 記号で、acoustic_merge_melisma の音響モデルには前の音素とまとめて渡す）、音素の書き方、子音だけの音符、長い休符の後の次の句。
+    # 伸ばしの母音（id 5 の ay）の手で動かした頭は、まとめるボイスバンクでは当てない
+    en_lyr = [(0, 480, 64, "I"), (480, 480, 67, "love"), (960, 480, 69, "the"), (1440, 480, 71, "skies"), (1920, 480, 72, "-"),
+              (2400, 480, 71, "beautiful"), (2880, 480, 69, "+"), (3360, 480, 67, "+"), (3840, 960, 64, "night"),
+              (4800, 480, 62, "+~"), (6240, 480, 64, "[hh eh l ow]"), (6720, 480, 67, "+"), (7200, 480, 69, "imagination"),
+              (7680, 480, 71, "++"), (8160, 480, 69, "+"), (8640, 480, 67, "together"), (9120, 480, 65, "+3"),
+              (9600, 960, 64, "dreams"), (10560, 480, 62, "s")]
+    english = [{"id": i + 1, "onset": o, "dur": d, "pitch": p, "lyric": l} for i, (o, d, p, l) in enumerate(en_lyr)]
+    en_vb = os.environ.get("GOLDEN_EN_VB")
     cases = [
         {"name": "sakura", "bpm": 100, "notes": sakura, "singer": 0, "seed": 0},
         {"name": "mixed", "bpm": 120, "notes": mixed, "singer": 1, "seed": 7,
@@ -182,9 +195,14 @@ def main():
         {"name": "dips", "bpm": 110, "notes": dips, "singer": 1, "seed": 11, "articulation": True,
          "ph_dip": {1: {0: {"db": -4.0, "w": 0.8}}, 3: {0: {"db": -2.5}}, 5: {0: {"w": 0.3}}, 7: {0: {"db": -6.0, "w": 1.5}},
                     9: {0: {"db": -3.0}}, 10: {0: {"db": 0.5}}, 2: {1: {"db": -3.0}}}},
-        {"name": "korean", "vb": "leapsinger_ko_mechol_sodasoo", "bpm": 120, "notes": korean, "singer": 0, "seed": 5,
-         "ph_shift": {3: {0: -0.05}}},
     ]
+    if os.environ.get("GOLDEN_KO_VB"):
+        cases.append({"name": "korean", "vb": os.environ["GOLDEN_KO_VB"], "bpm": 120, "notes": korean, "singer": 0, "seed": 5,
+                      "ph_shift": {3: {0: -0.05}}})
+    if en_vb:
+        for name, style, seed in (("english", "sequential", 13), ("english_count", "count", 14)):
+            cases.append({"name": name, "vb": en_vb, "bpm": 100, "notes": english, "singer": 0, "seed": seed,
+                          "lyric_style": style, "ph_shift": {5: {0: -0.05}, 9: {0: -0.03}}})
     only = set(sys.argv[1:])   # ケースの名前を渡すと、それだけ書き出す
 
     for c in cases:
@@ -199,7 +217,7 @@ def main():
         eng = engines[key]
         out_dir = OUT / c["name"]
         sv = Saver(out_dir)
-        phrases = eng.phrases_from_notes(c["notes"], c["bpm"])
+        phrases = eng.phrases_from_notes(c["notes"], c["bpm"], lyric_style=c.get("lyric_style", "sequential"))
         res = {"input": {k: v for k, v in c.items() if k != "name"}, "frame_rate": eng.frame_rate, "phrases": []}
         for pi, (ph, ids) in enumerate(phrases):
             f0_rt = {i: c.get("retake_f0", {}).get(nid, 0) for i, nid in enumerate(ids) if c.get("retake_f0", {}).get(nid, 0)}

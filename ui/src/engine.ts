@@ -24,6 +24,9 @@ export interface EPhoneme {
   nucleus?: boolean; // 音節の核（母音など。言語パックの nucleus）か。古いエンジンには無い
   /** 子音の既定の凹み（深さ dB・広さ = 子音の長さに対する割合。谷は子音の頭から）。凹みを掛けないボイスバンク・母音には無い */
   dip?: { db: number; w: number };
+  /** 伸ばしの音符で前の母音がそのまま続き、音響モデルには前の音素とまとめて渡す母音（acoustic_merge_melisma のボイスバンクだけ）。
+   * 画面は前の音素の続きとして描き、頭は動かせない */
+  held?: boolean;
 }
 
 export type PhraseStatus = "解析済み" | "合成中" | "済み" | "失敗";

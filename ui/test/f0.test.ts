@@ -26,6 +26,7 @@ for (const name of cases()) {
     const seq: PhonemeSequence = {
       phonemes: pp.phonemes, dur_sec: p.apply_shifts.dur_after as Float32Array, note_midi: pp.note_midi,
       is_vowel: pp.is_vowel, note_event_starts: pp.note_event_starts, leading_pau_sec: pp.leading_pau_sec,
+      held: pp.held ?? new Uint8Array(pp.phonemes.length), // 伸ばしの母音（伸ばしの記号で学習した F0 モデルにはその記号で渡す）
     };
     const prep = prepareF0(vb, seq, spk);
     const fd = p.f0_run.feeds;

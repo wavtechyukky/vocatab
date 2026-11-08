@@ -37,6 +37,7 @@ export function migrate(text: string): Project {
   // 版 1: 決めていない値は既定値で埋める（古いファイルや手で書いたファイルのため）
   p.bpm ||= 120;
   p.beatsPerBar ||= 4;
+  if (p.lyricStyle !== "count") delete p.lyricStyle; // 英語の + の読み方: 既定（sequential）は書かない
   p.tracks ??= [];
   for (const t of p.tracks) {
     t.notes ??= [];

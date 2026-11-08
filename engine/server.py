@@ -93,6 +93,8 @@ class AnalyzeReq(BaseModel):
     notes: list[dict]          # {id, onset, dur（刻み、4 分音符 = 480）, pitch, lyric, retake_f0?（種、0 = 元のテイク）,
                                #  ph_shift?（{音符の中の音素の番号: 秒}。手で動かした音素の頭）}
     seed: int = 0
+    # 英語の + の読み方（"sequential": + ごとに次の 1 音節、"count": + の数だけ音節）。ほかの言語では使わない
+    lyric_style: str = "sequential"
 
 
 @app.post("/api/analyze")
@@ -100,9 +102,9 @@ def analyze(r: AnalyzeReq):
     eng = engine(r.voicebank)
     fr = eng.frame_rate
     try:
-        phrases = eng.phrases_from_notes(r.notes, r.bpm)
-    except KeyError as e:          # モーラ表に無い歌詞など
-        raise HTTPException(400, str(e)) from e
+        phrases = eng.phrases_from_notes(r.notes, r.bpm, lyric_style=r.lyric_style)
+    except (KeyError, ValueError) as e:   # モーラ表・発音辞書に無い歌詞、知らない lyric_style など
+        raise HTTPException(400, str(e.args[0]) if e.args else str(e)) from e
     retake = {n["id"]: int(n.get("retake_f0") or 0) for n in r.notes}
     # 手で動かした音素の頭: 音符の id → {音符の中の音素の番号: 秒}
     shift = {n["id"]: {int(k): float(v) for k, v in (n.get("ph_shift") or {}).items() if v} for n in r.notes}
@@ -111,7 +113,8 @@ def analyze(r: AnalyzeReq):
         f0_rt = {i: retake.get(nid, 0) for i, nid in enumerate(ids) if retake.get(nid, 0)}
         sh = {i: shift[nid] for i, nid in enumerate(ids) if shift.get(nid)}
         sig = [r.voicebank, r.singer, r.seed, round(ph.start_sec, 6),
-               [(n.phonemes, n.pitch_midi, round(n.dur_sec, 6), round(n.gap_after_sec, 6)) for n in ph.notes],
+               [(n.phonemes, n.pitch_midi, round(n.dur_sec, 6), round(n.gap_after_sec, 6), bool(getattr(n, "melisma", False)))
+                for n in ph.notes],
                sorted(f0_rt.items()), sorted((i, sorted((k, round(v, 5)) for k, v in d.items())) for i, d in sh.items())]
         key = hashlib.sha1(json.dumps(sig, ensure_ascii=False).encode()).hexdigest()[:16]
         hit = _cache.get(key)
@@ -131,6 +134,8 @@ def analyze(r: AnalyzeReq):
             dip = an.dips[j] if an.dips is not None else None
             if dip is not None:                           # 子音の既定の凹み（深さ dB・広さ）。画面が描く
                 e["dip"] = {"db": float(20.0 * np.log10(max(dip["amp"], 1e-4))), "w": float(dip["w"])}
+            if eng.merge_melisma and an.held and an.held[j]:
+                e["held"] = True                          # 音響モデルで前の母音とまとめる。画面は前の音素の続きとして描く
             phs.append(e)
         out.append({"key": key, "note_ids": ids, "start_frame": int(round(an.start_sec * fr)),
                     "start_sec": float(an.start_sec), "seed": int(an.seed),   # ブラウザ版（protocol.ts）と同じ項目

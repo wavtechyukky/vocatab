@@ -91,7 +91,7 @@ $("btn-settings").addEventListener("click", () => openSettingsDialog(async (l) =
   const u = new URL(location.href);
   u.searchParams.delete("lang");
   location.replace(u.toString());
-}));
+}, store));
 /** カードの見出し: 今のトラックの色・名前・歌い手。 */
 const updateCardHead = (): void => {
   const t = store.track;
@@ -453,15 +453,18 @@ files.onImport = (t) => {
   arr.reveal(t);
   revealNotes(t);
 };
-// 読み込んだ楽譜の歌詞にハングル（仮名）があり、今の歌い手のボイスバンクが別の言語なら、その言語のボイスバンクの最初の歌い手にする
+// 読み込んだ楽譜の歌詞にハングル（仮名）があり、今の歌い手のボイスバンクが別の言語なら、その言語のボイスバンクの最初の歌い手にする。
+// 仮名もハングルも無く、4 文字以上の英字の語があれば英語とみなす（1 モーラのローマ字・音素の書き方は 3 文字までなので、
+// 日本語の楽譜を英語と取り違えない）
 files.pickVoice = (lyrics, cur) => {
   if (!renderer.connected) return null;
   const has = (re: RegExp) => lyrics.some((l) => re.test(l ?? ""));
-  const lang = has(/[가-힣]/) ? "ko" : has(/[぀-ヿ]/) ? "ja" : null;
+  const lang = has(/[가-힣]/) ? "ko" : has(/[぀-ヿ]/) ? "ja" : has(/[A-Za-z]{4,}/) ? "en" : null;
   if (!lang) return null;
+  const base = (l: string) => l.split("_")[0]; // en_full などは頭の言語で比べる
   const vbs = renderer.info!.voicebanks;
-  if ((vbs.find((v) => v.key === cur.voicebank) ?? vbs[0]).language === lang) return null;
-  const vb = vbs.find((v) => v.language === lang && v.singers.length);
+  if (base((vbs.find((v) => v.key === cur.voicebank) ?? vbs[0]).language) === lang) return null;
+  const vb = vbs.find((v) => base(v.language) === lang && v.singers.length);
   return vb ? { voicebank: vb.key, voice: vb.singers[0].name } : null;
 };
 // プロジェクトを開いたら: 曲の地図を曲全体が収まる縮尺・高さにし、今のトラックの頭と音域を見せる

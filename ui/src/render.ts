@@ -312,6 +312,7 @@ export class Renderer {
             voicebank: this.voicebankOf(track).key, singer: this.singerId(track), bpm: p.bpm, seed: 0,
             notes: notes.map((n) => ({ id: n.id, onset: n.onset, dur: n.dur, pitch: n.pitch, lyric: n.lyric,
                                        retake_f0: n.attrs.retakeF0 ?? 0, ph_shift: n.phShift ?? {} })),
+            lyric_style: p.lyricStyle ?? "sequential", // 英語の + の読み方（ほかの言語では使わない）
           });
         } catch (e) {
           this.error = tx("解析に失敗: {e}", { e: e instanceof Error ? e.message : String(e) });

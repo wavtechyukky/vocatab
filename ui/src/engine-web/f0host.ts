@@ -315,6 +315,15 @@ function buildBaseline(values: ArrayLike<number>, durSec: ArrayLike<number>, T: 
  * render._f0_score_from_seq → infer._read_score → infer._frame_grid → 土台（核音素の音高だけ・2 つの逃げ道）→
  * fill_values → pitch_midi → style_mix。
  */
+/**
+ * F0 モデルの伸ばしの記号（engine/pipeline.py の f0_hold）: f0.json の hold_symbol（無ければ「-」）が音素表にあればその記号、
+ * 無ければ null（伸ばしの母音は、今までどおり母音を繰り返して渡す）
+ */
+export function f0Hold(vb: VoicebankWeb): string | null {
+  const hs = (vb.f0.hold_symbol as string | undefined) || "-";
+  return (vb.f0.phonemes as string[]).includes(hs) ? hs : null;
+}
+
 export function prepareF0(vb: VoicebankWeb, seq: PhonemeSequence, spk: number): F0Prep {
   const cfg = vb.f0;
   const frameRate = Number(cfg.frame_rate);
@@ -322,8 +331,10 @@ export function prepareF0(vb: VoicebankWeb, seq: PhonemeSequence, spk: number): 
   const nucleus = new Set<string>(cfg.nucleus as string[]);
   const L = seq.phonemes.length;
 
-  // _f0_score_from_seq: note_midi > 0 の音素にだけ midi を付ける（pau は付かない）。_read_score で検証する
-  const phStrs = seq.phonemes.slice();
+  // _f0_score_from_seq: note_midi > 0 の音素にだけ midi を付ける（pau は付かない）。_read_score で検証する。
+  // 伸ばしの記号で書いたラベルで学習した F0 モデル（f0Hold）には、伸ばしの母音（seq.held）をその記号で渡す（音高はその音符のまま）
+  const hold = f0Hold(vb);
+  const phStrs = seq.phonemes.map((p, i) => (hold !== null && seq.held?.[i] ? hold : p));
   const unknown = [...new Set(phStrs.filter((p) => !ph2id.has(p)))].sort();
   if (unknown.length) throw new Error(`phonemes not in the model vocab: ${JSON.stringify(unknown)}`);
   const phIds = new Int32Array(L);

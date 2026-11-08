@@ -22,7 +22,7 @@ OUT = ROOT / "ui" / "test" / "golden" / "g2p_ko.json"
 
 def main():
     vbs, _ = scan(ROOT)
-    vb = next(v for v in vbs.values() if v.language == "ko")
+    vb = next(iter(vbs.values()))   # PrettyPitch の場所はどのボイスバンクでも同じ（韓国語のボイスバンクが無くても動く）
     sys.path.insert(0, str(vb.code["prettypitch"]))
     from svs.g2p_ko import syllables_to_phonemes
 

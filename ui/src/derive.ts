@@ -63,10 +63,19 @@ function fromEngine(project: Project, track: Track, phrases: EPhrase[], notes: N
     const count = new Map<number, number>();
     let prev: PhoneSeg | null = null; // 句の中で直前の音素（pau なら null）
     let pauStart: number | null = null; // 直前が pau なら、その pau の頭（秒）
+    let heldStart = -Infinity; // 直前の音素が、まとめた母音で終わっていれば、その最後の母音の頭（秒）
     for (const p of ph.phonemes) {
       if (p.ph !== "pau" && p.note !== null) {
         const idx = count.get(p.note) ?? 0;
         count.set(p.note, idx + 1);
+        if (p.held && prev) {
+          // 音響モデルでまとめた母音: 前の音素を伸ばして 1 つに見せる（skies - → s k ay（長い）z）。頭は動かせない。
+          // 番号（idx）は数えたままにして、同じ音符の後ろの音素（z）の手で動かした頭がずれないようにする
+          heldStart = f / FPS;
+          prev.end = (f + p.frames) / FPS;
+          f += p.frames;
+          continue;
+        }
         const s = f / FPS;
         // 手で動かした頭: エンジンが当てたずれを引いた所が自然な位置（baseStart）。
         // 画面の値がエンジンに届く前（ドラッグ中）でもすぐ追いかけるよう、今の値との差だけ動かして見せる
@@ -85,7 +94,9 @@ function fromEngine(project: Project, track: Track, phrases: EPhrase[], notes: N
                                 dip: p.dip ? { db: ov?.db ?? defDb, w: ov?.w ?? p.dip.w, edited: !!ov } : undefined };
         if (want !== applied) {
           if (prev) {
-            const t = Math.min(seg.end - MIN_PH, Math.max(prev.start + MIN_PH, seg.baseStart + want));
+            // エンジンは、まとめた母音の最後の 1 つ（音符の頭から）より前へは動かさない
+            const lo = Math.max(prev.start, heldStart) + MIN_PH;
+            const t = Math.min(seg.end - MIN_PH, Math.max(lo, seg.baseStart + want));
             seg.start = t;
             prev.end = t;
           } else if (pauStart !== null) {
@@ -96,9 +107,11 @@ function fromEngine(project: Project, track: Track, phrases: EPhrase[], notes: N
         phones.push(seg);
         prev = seg;
         pauStart = null;
+        heldStart = -Infinity;
       } else {
         prev = null;
         pauStart = f / FPS;
+        heldStart = -Infinity;
       }
       f += p.frames;
     }

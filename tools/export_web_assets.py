@@ -78,6 +78,15 @@ def main():
             web["breaths"] = rel(vb.breaths)   # ブレスの mel の一覧（breaths.json。bin はその中に書いてある）
         if isinstance(vb.raw.get("x0_shape"), dict):
             web["x0_shape"] = vb.raw["x0_shape"]   # 子音の凹みのレシピ（ブラウザ版は engine-web/x0shape.ts が読む）
+        if vb.raw.get("acoustic_merge_melisma"):
+            web["acoustic_merge_melisma"] = True   # 伸ばしの母音を音響モデルには前の音素とまとめて渡す
+        if getattr(ps, "g2p", None) == "en":
+            # 英語の発音辞書: PrettyPitch の dict/en_cmudict.txt を写す（ブラウザ版は英語のボイスバンクを使うときだけ読む）
+            src = Path(pp_root) / "dict" / "en_cmudict.txt"
+            dst = ROOT / "dict" / "en_cmudict.txt"
+            dst.parent.mkdir(exist_ok=True)
+            dst.write_bytes(src.read_bytes())
+            web["g2p_dict"] = {"path": rel(dst), "bytes": dst.stat().st_size}
         # 音響モデルの入力の名前（ブラウザ版が、モデルを読む前に exc_noise・x0_loggain の有無を知るため）
         import onnxruntime as ort
         web["acoustic_inputs"] = [i.name for i in ort.InferenceSession(

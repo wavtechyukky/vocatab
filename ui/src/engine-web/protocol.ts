@@ -9,6 +9,8 @@ export interface AnalyzeReq {
   seed: number;
   notes: Array<{ id: number; onset: number; dur: number; pitch: number; lyric: string; retake_f0?: number;
                  ph_shift?: Record<string, number> }>;
+  /** 英語の + の読み方（"sequential": + ごとに次の 1 音節、"count": + の数だけ音節）。省くと sequential。ほかの言語では使わない */
+  lyric_style?: string;
 }
 
 export interface AnalyzedPhrase {

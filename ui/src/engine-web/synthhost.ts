@@ -59,12 +59,35 @@ export function x0Curves(vb: VoicebankWeb, an: { phonemes: string[]; phDurs: Arr
   return { feed: hasInput ? (g && !mel ? g.slice(0, T) : new Float32Array(T)) : null, mel: mel && g ? g.slice(0, T) : null };
 }
 
+/**
+ * _acoustic_units: 音響モデルに渡す音素の番号と長さ（フレーム）。acoustic_merge_melisma のボイスバンクでは、伸ばしの音符で
+ * 前の母音が続く音素（held）を前の音素にまとめる（skies + - → s k ay | ay z を s k ay z。ay は 2 つの音符の長さの合計）。
+ * フレームごとの音素は変わらない（同じ母音どうしをつなぐだけ）
+ */
+export function acousticUnits(vb: VoicebankWeb, ids: number[], phDurs: ArrayLike<number>,
+                              held: ArrayLike<boolean | number> | null | undefined): { ids: number[]; durs: number[] } {
+  const durs = Array.from(phDurs, (d) => Number(d));
+  if (!vb.acoustic_merge_melisma || !held) return { ids, durs };
+  const t: number[] = [];
+  const d: number[] = [];
+  ids.forEach((id, j) => {
+    if (held[j] && t.length) d[d.length - 1] += durs[j];
+    else {
+      t.push(id);
+      d.push(durs[j]);
+    }
+  });
+  return { ids: t, durs: d };
+}
+
 /** synthesize の前半と _acoustic のモデルの前: 音響モデルへの入力、T に詰めた F0、無声・有声（uv_hard）、子音のフレーム。
  * excNoise は励振の雑音 [T·256]（リテイクを当てた後のもの。モデルが exc_noise を持たなければ null）、
- * x0 は子音の凹み [T]（x0Curves の feed。モデルが x0_loggain を持たなければ null） */
+ * x0 は子音の凹み [T]（x0Curves の feed。モデルが x0_loggain を持たなければ null）。
+ * an.held（伸ばしの母音）は acoustic_merge_melisma のボイスバンクで音素をまとめるのに使う */
 export function acousticFeeds(
   vb: VoicebankWeb,
-  an: { phonemes: string[]; phDurs: ArrayLike<number>; uv: ArrayLike<number>; noteIndex: number[] },
+  an: { phonemes: string[]; phDurs: ArrayLike<number>; uv: ArrayLike<number>; noteIndex: number[];
+        held?: ArrayLike<boolean | number> | null },
   f0Hz: Float32Array, spk: number, excNoise: Float32Array | null, x0: Float32Array | null = null,
 ): { feeds: Feeds; f0: Float32Array; uvHard: Float32Array; cons: Uint8Array; T: number } {
   const N = an.phonemes.length;
@@ -99,9 +122,10 @@ export function acousticFeeds(
   }
   const emb = vb.speakers.speakers[String(spk)];
   if (!emb) throw new Error(`歌い手がいません: ${spk}`);
+  const u = acousticUnits(vb, tokens, an.phDurs, an.held);
   const feeds: Feeds = {
-    tokens: i64(tokens, [1, N]),
-    durations: i64(an.phDurs, [1, N]),
+    tokens: i64(u.ids, [1, u.ids.length]),
+    durations: i64(u.durs, [1, u.durs.length]),
     f0: f32(f0, [1, T]),
     spk_embed: f32(Float32Array.from(emb), [1, emb.length]),
   };

@@ -1,12 +1,20 @@
-// ダイアログ: 書き出し（WAV）と設定（言語・差し色・mel の配色）。
+// ダイアログ: 書き出し（WAV）と設定（言語・差し色・mel の配色・英語の歌詞の + の読み方）。
 import { buildExports, download, exportFileName, type ExportWhat } from "./export";
 import { getLang, type Lang, LANGS, t } from "./i18n";
+import type { LyricStyle } from "./model";
 import type { Renderer } from "./render";
 import type { Store } from "./store";
 import {
   ACCENT_PRESETS, DEFAULT_ACCENT, getAccent, getGpu, getMelMap, MEL_MAPS, type MelMapKey, melGradient, setAccent, setGpu,
   setMelMap, trackColor,
 } from "./theme";
+
+/** 英語の歌詞の + の読み方: ボタンの文字と説明 */
+const LYRIC_STYLES: LyricStyle[] = ["sequential", "count"];
+const lyricStyleLabel = (k: LyricStyle): string => (k === "count" ? t("+ の数で音節を指定") : t("+ は次の音節へ"));
+const lyricStyleHint = (k: LyricStyle): string => (k === "count"
+  ? t("+ の数だけ音節を歌います（++ で 2 音節）。余った音節は歌いません。")
+  : t("+ で次の音節へ進みます（++ も 1 音節）。音節が余れば最後の音符でまとめて歌います。"));
 
 /** 画面の真ん中に出す枠。外側を押すか Esc で閉じる。 */
 function modal(title: string, onClose: () => void = () => undefined): { box: HTMLElement; close: () => void } {
@@ -145,8 +153,9 @@ export function openExportDialog(store: Store, engine: Renderer | null): void {
 }
 
 /** 設定: 言語・差し色（音符・強調の色）・mel の配色・エンジン（GPU）。ブラウザに保存する。
+ *  英語の歌詞の + の読み方だけはプロジェクトに保存する（store があるとき）。
  *  onLang: 言語を選んだとき（画面を読み込み直す。自動保存を済ませてから） */
-export function openSettingsDialog(onLang: (l: Lang) => void = () => undefined): void {
+export function openSettingsDialog(onLang: (l: Lang) => void = () => undefined, store?: Store): void {
   const { box } = modal(t("設定"));
   const body = document.createElement("div");
   body.className = "dlg-body";
@@ -154,6 +163,7 @@ export function openSettingsDialog(onLang: (l: Lang) => void = () => undefined):
   const render = () => {
     const acc = getAccent();
     const mm = getMelMap();
+    const ls: LyricStyle = store?.project.lyricStyle ?? "sequential";
     body.innerHTML = `
       <div class="dlg-sub">${t("画面の言語")}<span class="h-note">${t("変更するとページを再読み込みします（編集内容は自動保存から復元されます）")}</span></div>
       <div class="seg langs">${LANGS.map(([k, label]) => `<button data-lang="${k}" class="${k === getLang() ? "on" : ""}">${label}</button>`).join("")}</div>
@@ -165,6 +175,10 @@ export function openSettingsDialog(onLang: (l: Lang) => void = () => undefined):
       <div class="melmaps">${(Object.keys(MEL_MAPS) as MelMapKey[]).map((k) => `
         <button class="melmap${k === mm ? " on" : ""}" data-k="${k}"><span class="mm-bar" style="background:${melGradient(k)}"></span>
           <span class="mm-name">${MEL_MAPS[k].label}</span></button>`).join("")}</div>
+      ${store ? `
+      <div class="dlg-sub">${t("英語の歌詞の + 記号")}<span class="h-note">${t("このプロジェクトに保存します")}</span></div>
+      <div class="seg lyric-style">${LYRIC_STYLES.map((k) => `<button data-ls="${k}" class="${k === ls ? "on" : ""}">${lyricStyleLabel(k)}</button>`).join("")}</div>
+      <p class="hint">${lyricStyleHint(ls)} ${t("どちらも - と +~ は伸ばし、+3 は単語の 3 番目の音素から始めます。")}</p>` : ""}
       <div class="dlg-sub">${t("エンジン")}</div>
       <label class="check" id="gpu-label"><input id="gpu-on" type="checkbox"> ${t("GPU で計算する（実験的・Chrome 向け。変更は読み込み直しで反映）")}</label>
       <div class="check-note" id="gpu-note" hidden></div>`;
@@ -182,6 +196,17 @@ export function openSettingsDialog(onLang: (l: Lang) => void = () => undefined):
     body.querySelector("#acc-reset")!.addEventListener("click", () => { setAccent(DEFAULT_ACCENT); render(); });
     for (const b of body.querySelectorAll<HTMLButtonElement>(".melmap")) {
       b.addEventListener("click", () => { setMelMap(b.dataset.k as MelMapKey); render(); });
+    }
+    for (const b of body.querySelectorAll<HTMLButtonElement>("[data-ls]")) {
+      b.addEventListener("click", () => {
+        if (!store || b.dataset.ls === ls) return;
+        const before = store.snapshot();
+        if (b.dataset.ls === "count") store.project.lyricStyle = "count";
+        else delete store.project.lyricStyle; // 既定（sequential）は書かない
+        store.commit(before);
+        store.changed("project");
+        render();
+      });
     }
     // GPU（WebGPU）は既定でオフ。Safari では WebGPU 入りの計算の部品を読むだけで読み込み直しが起きるので、Chrome 向けの実験的な設定
     const gpu = body.querySelector<HTMLInputElement>("#gpu-on")!;

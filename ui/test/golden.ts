@@ -7,6 +7,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseDict, registerDict } from "../src/engine-web/g2p_en";
 
 const shapes = new WeakMap<object, number[]>();
 export const shapeOf = (a: object): number[] => shapes.get(a) ?? [];
@@ -70,27 +71,38 @@ export function loadCase(name: string): any {
   return resolve(JSON.parse(readFileSync(join(dir, "case.json"), "utf-8")), dir);
 }
 
-// ケースごとのボイスバンク（tools/golden/dump_golden.py のケースの "vb"。無ければ日本語）
-const CASE_VB: Record<string, string> = { korean: "leapsinger_ko_mechol_sodasoo" };
-const vbKey = (name: string): string => CASE_VB[name] ?? "leapsinger_ja_3singer";
+// ケースごとのボイスバンク（tools/golden/dump_golden.py のケースの "vb"。無ければ日本語）。韓国語・英語のケースは、手元の
+// ボイスバンク（同梱していない）の名前を環境変数 GOLDEN_KO_VB・GOLDEN_EN_VB で渡したときだけ
+const CASE_VB: Record<string, string | undefined> = {
+  korean: process.env.GOLDEN_KO_VB, english: process.env.GOLDEN_EN_VB, english_count: process.env.GOLDEN_EN_VB,
+};
+const vbKey = (name: string): string | undefined => (name in CASE_VB ? CASE_VB[name] : "leapsinger_ja_3singer");
 
-/** そのケースのボイスバンクが手元にあるか（韓国語のボイスバンクは同梱していない） */
-export const hasVb = (name: string): boolean => existsSync(join(repoRoot(), `voicebanks/${vbKey(name)}/web.json`));
+/** そのケースのボイスバンクが手元にあるか（韓国語・英語のボイスバンクは同梱していない） */
+export const hasVb = (name: string): boolean => {
+  const k = vbKey(name);
+  return !!k && existsSync(join(repoRoot(), `voicebanks/${k}/web.json`));
+};
 
 /** 照らし合わせるケース。ボイスバンクが手元に無いケースは、その旨を出して飛ばす */
 export function cases(): string[] {
-  return ["sakura", "mixed", "params", "dips", "korean"].filter((name) => {
+  return ["sakura", "mixed", "params", "dips", "korean", "english", "english_count"].filter((name) => {
     if (hasVb(name)) return true;
-    console.log(`（${name} は飛ばす: ボイスバンク ${vbKey(name)} が手元に無い）`);
+    const env = name === "korean" ? "GOLDEN_KO_VB" : "GOLDEN_EN_VB";
+    console.log(`（${name} は飛ばす: ボイスバンク ${vbKey(name) ?? `（環境変数 ${env}）`} が手元に無い）`);
     return false;
   });
 }
 
 const vbCache = new Map<string, any>();
-/** そのケースを書き出したボイスバンクの web.json */
+/** そのケースを書き出したボイスバンクの web.json（英語なら発音辞書も読んで G2P に渡す） */
 export function vbFor(name: string): any {
-  const key = vbKey(name);
-  if (!vbCache.has(key)) vbCache.set(key, JSON.parse(readRepo(`voicebanks/${key}/web.json`)));
+  const key = vbKey(name)!;
+  if (!vbCache.has(key)) {
+    const vb = JSON.parse(readRepo(`voicebanks/${key}/web.json`));
+    if (vb.g2p_dict) registerDict(vb.g2p_dict.path, parseDict(readRepo(vb.g2p_dict.path)));
+    vbCache.set(key, vb);
+  }
   return vbCache.get(key);
 }
 

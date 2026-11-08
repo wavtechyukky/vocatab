@@ -2,12 +2,15 @@
 
 ui/test/e2e.ts を esbuild で ui/test/e2e.js にまとめ、リポジトリの頭を http で配り、e2e.html を開く。
 使い方: python tools/run_e2e.py [--cases sakura,mixed,params,dips]
+  環境変数 GOLDEN_EN_VB（手元の英語のボイスバンク。tools/golden/dump_golden.py と同じ）があれば、既定のケースに
+  english・english_count も足す。
 """
 import argparse
 import asyncio
 import functools
 import http.server
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -22,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--cases", default="sakura,mixed,params,dips")
+ap.add_argument("--cases", default="sakura,mixed,params,dips" + (",english,english_count" if os.environ.get("GOLDEN_EN_VB") else ""))
 ap.add_argument("--port", type=int, default=8099)
 ap.add_argument("--model-only", default="", help="音響モデルだけを同じ入力で動かして比べる楽譜の名前")
 args = ap.parse_args()

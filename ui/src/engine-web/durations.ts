@@ -158,7 +158,7 @@ export function splitPhraseSyllables(phrase: Phrase, ps: PhoneSet): Phrase {
     const m = groups.length;
     groups.forEach((g, gi) => {
       notes.push({ phonemes: g.slice(), pitch_midi: note.pitch_midi, dur_sec: note.dur_sec / m,
-                   gap_after_sec: gi === m - 1 ? note.gap_after_sec : 0.0 });
+                   gap_after_sec: gi === m - 1 ? note.gap_after_sec : 0.0, melisma: !!note.melisma && gi === 0 });
     });
   }
   return { notes, leading_pau_sec: phrase.leading_pau_sec, trailing_pau_sec: phrase.trailing_pau_sec,
@@ -396,6 +396,7 @@ interface Syl {
   core_nat: number[];
   onset_dur: number[];
   coda_dur: number[];
+  melisma: boolean; // PNote.melisma（音符の最初のまとまりだけ）
 }
 
 /** _floor_each: 各子音を自然長と下限の大きい方に（lead なら句の頭の下限） */
@@ -553,6 +554,7 @@ function toSyls(phrase: Phrase, ps: PhoneSet, onsetNat: number[][] | null, codaN
         onset, nucleus, coda, pitch_midi: note.pitch_midi, dur_sec: note.dur_sec / m,
         gap_after_sec: gi === m - 1 ? note.gap_after_sec : 0.0,
         onset_nat: on.slice(), coda_nat: cd.slice(), core_nat: co.slice(), onset_dur: [], coda_dur: [],
+        melisma: !!note.melisma && gi === 0,
       });
     });
   });
@@ -566,8 +568,10 @@ function buildSequence(syls: Syl[], leadingPau: number, trailingPau: number, ps:
   const midis: number[] = [];
   const vowels: number[] = [];
   const starts: number[] = [];
-  const append = (ph: string, dur: number, midi: number, vow: boolean, start: boolean) => {
+  const helds: number[] = [];
+  const append = (ph: string, dur: number, midi: number, vow: boolean, start: boolean, held = false) => {
     phonemes.push(ph); durs.push(dur); midis.push(midi); vowels.push(vow ? 1 : 0); starts.push(start ? 1 : 0);
+    helds.push(held ? 1 : 0);
   };
   append(PAU, leadingPau, 0, false, false);
   const n = syls.length;
@@ -593,7 +597,12 @@ function buildSequence(syls: Syl[], leadingPau: number, trailingPau: number, ps:
       s.nucleus.forEach((v, iv) => {
         const dv = w !== null ? w[iv] : per;
         if (v === PAU) append(PAU, dv, 0, false, false);
-        else append(v, dv, s.pitch_midi, ps.isNucleus(v), first && !s.onset.length);
+        else {
+          const isStart = first && !s.onset.length; // onset が無ければ最初の母音が音符の頭
+          // 伸ばしの音符の最初の核が、すぐ前の音素と同じ母音なら「前の母音の続き」
+          const held = isStart && s.melisma && ps.isNucleus(v) && phonemes.length > 0 && phonemes[phonemes.length - 1] === v;
+          append(v, dv, s.pitch_midi, ps.isNucleus(v), isStart, held);
+        }
         first = false;
       });
     } else {
@@ -606,6 +615,7 @@ function buildSequence(syls: Syl[], leadingPau: number, trailingPau: number, ps:
   return {
     phonemes, dur_sec: Float32Array.from(durs), note_midi: Int32Array.from(midis),
     is_vowel: Uint8Array.from(vowels), note_event_starts: Uint8Array.from(starts), leading_pau_sec: leadingPau,
+    held: Uint8Array.from(helds),
   };
 }
 
@@ -781,6 +791,24 @@ export function finishDurations(vb: VoicebankWeb, prep: DurPrep, pred: Float32Ar
     if (seq.note_event_starts[i]) k++;
     noteIndex.push(ph === PAU ? -1 : syl2note[Math.min(Math.max(k, 0), syl2note.length - 1)]);
   });
+  if (vb.acoustic_merge_melisma && shifts) {
+    // 音響モデルで前の母音とまとめる音素（held）は、画面でも前の音素につなげて見せ、頭を動かせないので、
+    // 残っていたずれは当てない（engine/pipeline.py の analyze と同じ）
+    const cnt = new Map<number, number>();
+    const drop = new Set<string>();
+    noteIndex.forEach((ni, i) => {
+      if (ni < 0) return;
+      cnt.set(ni, (cnt.get(ni) ?? 0) + 1);
+      if (seq.held[i]) drop.add(`${ni}:${cnt.get(ni)! - 1}`);
+    });
+    if (drop.size) {
+      const kept: Record<number, Record<number, number>> = {};
+      for (const [ni, d] of Object.entries(shifts)) {
+        kept[Number(ni)] = Object.fromEntries(Object.entries(d).filter(([k]) => !drop.has(`${ni}:${k}`)));
+      }
+      shifts = kept;
+    }
+  }
   const pauMin = PAU_MIN_FRAMES / vb.frame_rate + PAU_MIN_EPS;
   const applied = applyShifts(seq, noteIndex, shifts ?? {}, pauMin);
   const [phDurs, totalFrames] = toFrames(seq.dur_sec, vb.frame_rate);

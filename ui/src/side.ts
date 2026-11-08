@@ -210,9 +210,9 @@ export class SidePanel {
         ? `<optgroup label="${vb.name}">${vb.singers.map((x) => opt(vb.key, x.name, singerDisplay(x, x.name))).join("")}</optgroup>`
         : vb.singers.map((x) => opt(vb.key, x.name, singerDisplay(x, x.name))).join("")).join("")
       : ["ritsu", "natsume", "oniku"].map((n) => opt("", n, n)).join("");
-    const LANG_NAMES: Record<string, string> = { ja: tx("日本語"), ko: tx("韓国語") };
+    const LANG_NAMES: Record<string, string> = { ja: tx("日本語"), ko: tx("韓国語"), en: tx("英語"), zh: tx("中国語") };
     const langCode = cur?.language ?? "ja";
-    const lang = LANG_NAMES[langCode] ?? langCode;
+    const lang = LANG_NAMES[langCode] ?? LANG_NAMES[langCode.split("_")[0]] ?? langCode; // en_full などは頭の言語で
     head.innerHTML = `<div class="track-title"><span class="dot"></span><span class="tn"></span></div>
       <div class="row2"><span>${tx("歌い手")}</span><select id="sel-voice">${options}</select></div>
       <div class="row2"><span>${tx("モデル")}</span><span class="muted">${cur ? cur.name

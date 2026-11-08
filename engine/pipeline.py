@@ -25,6 +25,8 @@ from . import x0shape
 from .voicebank import VocoderSpec, Voicebank
 
 PAU = "pau"
+HOLD = "-"                                  # 伸ばしの記号の既定（f0.json に hold_symbol が無いとき）
+LYRIC_STYLES = ("sequential", "count")      # 英語の + の読み方（PrettyPitch の score_io.LYRIC_STYLES と同じ）
 
 
 def _session(path) -> ort.InferenceSession:
@@ -126,6 +128,8 @@ class PhraseAnalysis:
     # 子音ごとの既定の凹み（engine/x0shape.py の dips。{"amp": 谷の底の振幅, "w": 広さ}、子音でなければ None）。
     # 凹みを掛けないボイスバンクでは None
     dips: list | None = None
+    # 音素ごとの、伸ばしの音符で前の母音がそのまま続くか（PrettyPitch の PhonemeSequence.held。「skies」「-」の 2 つ目の ay）
+    held: list | None = None
 
 
 class PrettyPitchLeapSinger:
@@ -164,6 +168,15 @@ class PrettyPitchLeapSinger:
         self.s_f0 = _session(m["f0"])
         self.s_ac = _session(m["acoustic"])
         self.ac_inputs = {i.name for i in self.s_ac.get_inputs()}
+        # 伸ばしの音符で前の母音がそのまま続く音素（PhraseAnalysis.held）を、音響モデルには前の音素とまとめて 1 つで渡す
+        # （F0 には音符ごとのまま）。音高が変わっても母音を切らないラベルで学習したボイスバンク向けで、voicebank.yaml の
+        # acoustic_merge_melisma（既定は off）。二重母音を音符ごとに分けて渡すと、音素の中の位置が 2 回 0→1 になり、
+        # 移り変わり（ay の a→i）が 2 回鳴るため
+        self.merge_melisma = bool(vb.raw.get("acoustic_merge_melisma", False))
+        # 伸ばしの記号で書いたラベルで学習した F0 モデル（f0.json の hold_symbol。無ければ音素表に「-」があるもの）には、
+        # 伸ばしの母音をその記号で渡す（skies - → s k ay | - z）。ほかのモデルには、今までどおり母音を繰り返して渡す（s k ay | ay z）
+        hs = self.f0cfg.get("hold_symbol") or HOLD
+        self.f0_hold = hs if hs in self.f0cfg["phonemes"] else None
         # 子音の凹み（voicebank.yaml の x0_shape、engine/x0shape.py）。既定は擬似 mel に掛ける（音響 ONNX の x0_loggain）。
         # apply: mel なら、同じ曲線を出力の mel に掛ける（x0_loggain の無い ONNX でも使える）
         cfg = vb.raw.get("x0_shape")
@@ -245,11 +258,17 @@ class PrettyPitchLeapSinger:
         return wav
 
     # ── 楽譜 → 句 ─────────────────────────────────────────
-    def phrases_from_notes(self, notes: list[dict], bpm: float, tpq: int = 480):
+    def phrases_from_notes(self, notes: list[dict], bpm: float, tpq: int = 480, lyric_style: str = "sequential"):
         """画面の音符（刻みの位置・長さ・音高・歌詞）→ PrettyPitch の Phrase の列と、句ごとの音符の id。
 
         音符の隙間は休符にする（0.5 秒以上の休符で句を切る）。重なった音符は前の音符を後ろの頭で切る。
+        歌詞が空・-・ー・+ で始まる音符は伸ばし（前の母音を続ける）。英語だけは記号をそのまま PrettyPitch へ渡し、
+        lyric_style（LYRIC_STYLES）で単語の音節を続く音符へ配る（+ は次の音節、- と +~ は伸ばし、+3 は単語の 3 番目の
+        音素から）。ほかの言語は 1 音符に 1 音節（モーラ・音節）なので、+ で始まる記号はどれも伸ばし。
         """
+        if lyric_style not in LYRIC_STYLES:
+            raise ValueError(f"lyric_style は {LYRIC_STYLES} のどれか（{lyric_style!r}）")
+        en = self.ps.g2p == "en"
         SN = self.score_io.ScoreNote
         ns = sorted(notes, key=lambda n: n["onset"])
         score, ids, cursor = [], [], 0
@@ -264,13 +283,15 @@ class PrettyPitchLeapSinger:
             if end <= onset:
                 continue
             lyric = str(n.get("lyric") or "").strip()
-            melisma = lyric in ("", "-", "ー", "+")
+            melisma = lyric in ("", "-", "ー") or lyric.startswith("+")
             score.append(SN(dur_beats=(end - onset) / tpq, midi=int(n["pitch"]),
-                            lyric=None if melisma else lyric,
+                            lyric=(lyric if en else None) if melisma else lyric,
                             phonemes=None if melisma else self._lyric_phonemes(lyric)))
             ids.append(n["id"])
             cursor = end
-        phrases = self.score_io.score_to_phrases(score, bpm, phoneset=self.ps)
+        # lyric_style は英語でだけ渡す（英語の G2P の無い前の版の PrettyPitch でも、ほかの言語はそのまま動くように）
+        kw = {"lyric_style": lyric_style} if en else {}
+        phrases = self.score_io.score_to_phrases(score, bpm, phoneset=self.ps, **kw)
         out, i = [], 0
         for ph in phrases:
             out.append((ph, ids[i:i + len(ph.notes)]))
@@ -280,7 +301,16 @@ class PrettyPitchLeapSinger:
     def _lyric_phonemes(self, lyric: str) -> list[str] | None:
         """英数字だけの歌詞を音素の列にする（仮名を含む歌詞は None。モーラ表に任せる）。
         音素はいくつ並んでもよい（核が複数「k a k i k u」・子音だけ「sh」「s t」・ローマ字の綴りにならない「k r a cl sh u」）。
-        空白で区切った記号が音素ならそのまま使い、区切っていない所（「kakiku」「shu」）は音素の名前の最長一致で切る。"""
+        空白で区切った記号が音素ならそのまま使い、区切っていない所（「kakiku」「shu」）は音素の名前の最長一致で切る。
+        英語は、音素の書き方（「[hh eh l ow]」・空白で区切った 2 つ以上の音素・子音 1 つ）ならその音素、それ以外は None
+        （単語は PrettyPitch の英語の G2P が発音辞書で引き、続く + の音符へ音節を配る。辞書に無い語はそこで知らせる）。"""
+        if self.ps.g2p == "en":
+            from svs.g2p_en import explicit_phonemes
+            ph = explicit_phonemes(lyric, self.ps)
+            bad = [p for p in ph or [] if p not in self.lyric_set]
+            if bad:
+                raise KeyError(f"歌詞「{lyric}」の音素「{' '.join(bad)}」はこのボイスバンクのモデルにありません")
+            return ph
         if not lyric.isascii():
             return None
         out: list[str] = []
@@ -326,12 +356,17 @@ class PrettyPitchLeapSinger:
         return onset_nat, coda_nat, core_nat
 
     # ── ③④ F0（ONNX）と補正 ───────────────────────────────
-    def _f0(self, seq, spk_id: int, seed: int, note_index=None, retakes=None) -> dict:
+    def _f0(self, seq, spk_id: int, seed: int, note_index=None, retakes=None, held=None) -> dict:
         """PrettyPitch の generate_f0 + correct_f0 と同じ。モデルの部分だけ f0.onnx。
         ただし土台は学習時と同じく核音素の音高だけから作る（render の譜面どおりだと子音にも音高が付く）。
-        retakes: {句の中の音符の番号: 種}。その音符のフレームだけ、拡散の雑音（x_T と各段の雑音）を差し替える。"""
+        retakes: {句の中の音符の番号: 種}。その音符のフレームだけ、拡散の雑音（x_T と各段の雑音）を差し替える。
+        held: 音素ごとの、伸ばしの音符で前の母音が続くか（PhraseAnalysis.held）。f0_hold のモデルにはそこを伸ばしの記号で渡す。"""
         pp, cfg = self.pp, self.f0cfg
         score = self.R._f0_score_from_seq(seq, spk_id=spk_id, style_id=0)
+        if self.f0_hold and held:
+            for slot, h in zip(score["phonemes"], held):
+                if h:
+                    slot["ph"] = self.f0_hold      # 音高（midi）はその音符のまま。伸ばしの記号は核（f0.json の nucleus）
         ph_strs, ph_ids, dur_sec, values = pp._read_score(score, cfg)
         T, ph_durs = pp._frame_grid(dur_sec, self.frame_rate)
         from prettypitch.baseline import fill_values
@@ -399,10 +434,23 @@ class PrettyPitchLeapSinger:
                 if st:
                     k += 1
                 note_index.append(-1 if ph == PAU else syl2note[min(max(k, 0), len(syl2note) - 1)])
+            # 伸ばしの音符の頭で、前の音符の母音がそのまま続く音素（PrettyPitch が楽譜の伸ばしの記号から決める。
+            # held の無い前の版の PrettyPitch では、どこも続きとみなさない）
+            h = getattr(seq, "held", None)
+            held = [bool(x) for x in h] if h is not None else [False] * len(seq.phonemes)
+            if self.merge_melisma and ph_shifts:
+                # まとめる母音は画面でも前の音素につなげて見せ、頭を動かせないので、残っていたずれは当てない
+                cnt, drop = {}, set()
+                for ni, x in zip(note_index, held):
+                    if ni >= 0:
+                        cnt[ni] = cnt.get(ni, 0) + 1
+                        if x:
+                            drop.add((ni, cnt[ni] - 1))
+                ph_shifts = {ni: {k: v for k, v in d.items() if (ni, k) not in drop} for ni, d in ph_shifts.items()}
             # pau の後の音素は、最初に作られた pau の中だけで左へ伸ばせる（pau は PAU_MIN_FRAMES 残す）
             applied = _apply_shifts(seq, note_index, ph_shifts or {}, PAU_MIN_FRAMES / self.frame_rate + PAU_MIN_EPS)
             ph_durs, _ = dp.to_frames(seq.dur_sec, self.frame_rate)
-            f0o = self._f0(seq, spk_id, seed, note_index, f0_retakes)  # F0 も動かした長さで作る
+            f0o = self._f0(seq, spk_id, seed, note_index, f0_retakes, held)  # F0 も動かした長さで作る
         T = len(f0o["f0_hz"])
         ph_durs = np.asarray(R._align_durs(ph_durs, T), np.int64)
         dips = None
@@ -414,7 +462,7 @@ class PrettyPitchLeapSinger:
             plain_log2=np.log2(np.maximum(f0o["plain_hz"], 1e-3)).astype(np.float32),
             vib_log2=np.asarray(f0o["vib_delta"], np.float32), uv=np.asarray(f0o["uv"], np.float32),
             note_index=note_index, seed=int(seed), shifts=applied,
-            base_log2=np.asarray(f0o["baseline_log2"], np.float32), dips=dips)
+            base_log2=np.asarray(f0o["baseline_log2"], np.float32), dips=dips, held=held)
 
     def dip_overrides(self, an: PhraseAnalysis, ph_dips: dict | None) -> dict:
         """画面で動かした凹み {句の中の音符の番号: {音符の中の音素の番号: {"db": 深さ, "w": 広さ}}}
@@ -460,7 +508,7 @@ class PrettyPitchLeapSinger:
         f0 = np.asarray(f0_hz, np.float32)[:T]
         if len(f0) < T:
             f0 = np.pad(f0, (0, T - len(f0)), mode="edge")
-        tokens = np.asarray([self.ph2id[p] for p in an.phonemes], np.int64)
+        tokens, durs = self._acoustic_units(an)
         frame_ph = np.repeat(np.asarray(an.phonemes), an.ph_durs)[:T]
         uv_hard = ((an.uv[:T] > 0.5) & (frame_ph != PAU)).astype(np.float32)
         cons = np.array([not (p == PAU or self.ps.is_nucleus(p)) for p in frame_ph], bool)  # 子音のフレーム
@@ -470,12 +518,12 @@ class PrettyPitchLeapSinger:
         ov = self.dip_overrides(an, ph_dips)
         sc = self.dip_scales(an, params.get("articulation"), ov)
         with self.lock:
-            ac_key = _digest(an.seed, spk_id, tokens, an.ph_durs, f0, sorted(rt.items()),
+            ac_key = _digest(an.seed, spk_id, tokens, durs, f0, sorted(rt.items()),
                              sorted((j, round(o["amp"], 6), round(o["w"], 6)) for j, o in ov.items()),
                              sorted((j, round(m, 4)) for j, m in sc.items()))
             mel_in = self._ac_cache.get(ac_key)
             if mel_in is None:
-                mel_in = self._acoustic(an, tokens, f0, spk_id, uv_hard, rt, ov, sc)
+                mel_in = self._acoustic(an, tokens, durs, f0, spk_id, uv_hard, rt, ov, sc)
                 self._ac_cache.put(ac_key, mel_in)
             voc_key = _digest(ac_key, voc.key)
             hit = self._voc_cache.get(voc_key)
@@ -519,13 +567,32 @@ class PrettyPitchLeapSinger:
             f += d
         return out
 
-    def _acoustic(self, an: PhraseAnalysis, tokens, f0, spk_id: int, uv_hard, retakes=None, dips=None,
+    def _acoustic_units(self, an: PhraseAnalysis) -> tuple[np.ndarray, np.ndarray]:
+        """⑤ に渡す音素の番号と長さ（フレーム）。merge_melisma なら、伸ばしの音符で前の母音が続く音素（an.held）を
+        前の音素にまとめる（skies + - → s k ay | ay z を s k ay z、ay は 2 つの音符の長さの合計）。
+        フレームごとの音素は変わらない（同じ母音どうしをつなぐだけ）。"""
+        ids = [self.ph2id[p] for p in an.phonemes]
+        durs = [int(d) for d in an.ph_durs]
+        if self.merge_melisma and an.held:
+            t, d = [], []
+            for i, n, h in zip(ids, durs, an.held):
+                if h and t:
+                    d[-1] += n
+                else:
+                    t.append(i)
+                    d.append(n)
+            ids, durs = t, d
+        return np.asarray(ids, np.int64), np.asarray(durs, np.int64)
+
+    def _acoustic(self, an: PhraseAnalysis, tokens, durs, f0, spk_id: int, uv_hard, retakes=None, dips=None,
                   scales=None) -> np.ndarray:
         """⑤ 音響モデル → ⑥ mel の後処理。戻り値はボコーダに入れる mel [128, T]。
+        tokens・durs: _acoustic_units の音素と長さ。
         retakes: {句の中の音符の番号: 種}（AI リテイク。その音符の所だけ励振の雑音を差し替える）
-        dips: 子音の凹みの上書き（x0shape.loggain の overrides）、scales: 既定の凹みの倍率（滑舌）"""
+        dips: 子音の凹みの上書き（x0shape.loggain の overrides）、scales: 既定の凹みの倍率（滑舌）。
+        凹みはまとめる前の音素（an.phonemes）で作る（番号は画面の音素と同じ。まとめるのは母音どうしなので曲線は変わらない）"""
         T = len(f0)
-        feeds = {"tokens": tokens[None], "durations": an.ph_durs[None], "f0": np.asarray(f0, np.float32)[None],
+        feeds = {"tokens": tokens[None], "durations": durs[None], "f0": np.asarray(f0, np.float32)[None],
                  "spk_embed": self.spk_vec[spk_id][None]}
         if "exc_noise" in self.ac_inputs:  # 励振の雑音も句の種から
             z = np.random.default_rng([an.seed, 1]).standard_normal((1, T * 256)).astype(np.float32)
