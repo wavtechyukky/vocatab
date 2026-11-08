@@ -419,7 +419,8 @@ class PrettyPitchLeapSinger:
     def dip_overrides(self, an: PhraseAnalysis, ph_dips: dict | None) -> dict:
         """画面で動かした凹み {句の中の音符の番号: {音符の中の音素の番号: {"db": 深さ, "w": 広さ}}}
         → x0shape.loggain の overrides {句の中の音素の番号: {"amp": 振幅, "w": 広さ}}。片方だけのときは既定で埋める。
-        深さ（dB）はまだ名目の値（擬似 mel に掛ける深さ）。出力の深さへの変換表は後で入れる。"""
+        深さ（dB）は擬似 mel に掛ける名目の値。出力の凹みは子音・前後の音・歌い手で大きく変わるので、画面は dB ではなく
+        相対的な深さ（%。DIP_DB_MIN = 100%）で見せる。"""
         if not ph_dips or not self.x0_on or an.dips is None:
             return {}
         out, count = {}, {}

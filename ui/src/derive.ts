@@ -21,7 +21,7 @@ export interface PhoneSeg {
 }
 
 const MIN_PH = 0.012; // 音素の最短（秒）
-export const DIP_DB_MIN = -5; // 子音の凹みの深さの限界（名目 dB。engine/pipeline.py の DIP_DB_MIN と同じ）
+export const DIP_DB_MIN = -5; // 子音の凹みの深さの限界（名目 dB。画面では深さ 100%。engine/pipeline.py の DIP_DB_MIN と同じ）
 const PAU_MIN = 4 / FPS + 1e-4; // pau の後の頭を左へ動かしても、pau はこれより短くしない（engine/pipeline.py の PAU_MIN_FRAMES）
 
 export interface Derived {

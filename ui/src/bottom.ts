@@ -14,7 +14,9 @@ import { secPerTick } from "./model";
 import type { Store } from "./store";
 import { KEY_W, type View, wheelScrollX } from "./view";
 
-// 子音の凹みの描き方。縦軸は箱の上の線（0 dB）から下へ DIP_DB_MIN（derive.ts）まで（変換表を入れるまでは名目の深さ）。
+// 子音の凹みの描き方。縦軸は箱の上の線（深さ 0%）から下へ DIP_DB_MIN（derive.ts。深さ 100%）まで。中身は擬似 mel に
+// 掛ける名目の深さ（dB）だが、出力の凹みは子音・前後の音・歌い手で大きく変わる（日本語のモデルで名目 −2 dB の破裂音が
+// 出力 −6〜−15 dB。2026-11-08 に測った）ので、画面には dB を出さず、相対的な深さ（%）で見せる。
 // 名目で −5 dB より深くすると、出力の mel はほぼ無音になる（2026-11-08 に聴いて確かめた）ので、そこを動かせる限界にする
 const DIP_W_MIN = 0.1; // 広さの下限（子音の長さに対する割合）
 const DIP_HANDLE_R = 2.5; // 頂点の半径（px）。曲線を隠さないよう小さく（つかめる距離は DIP_HIT_R）
@@ -434,7 +436,7 @@ export class PhonemePanel {
       }
       if (hov && hov.noteId === s.noteId && hov.idx === s.idx) {
         const ms = Math.round(d.w * (s.end - s.start) * 1000);
-        const label = `${d.db <= -0.05 ? "−" : ""}${Math.abs(d.db).toFixed(1)} dB · ${ms} ms`;
+        const label = t("深さ {p}% · {ms} ms", { p: Math.round((Math.min(0, d.db) / DIP_DB_MIN) * 100), ms });
         ctx.font = "11px 'Hiragino Sans', sans-serif";
         const tw = ctx.measureText(label).width;
         const lx = Math.min(w - tw - 4, Math.max(KEY_W + 2, p.x - tw / 2));
